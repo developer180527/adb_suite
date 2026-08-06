@@ -1,0 +1,30 @@
+name: feature_logcat
+description: Logcat capture, filtering, and viewer.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  # Pinned to a tag for reproducible CI; pubspec_overrides.yaml points these
+  # at a local checkout during development.
+  adb_core:
+    git:
+      url: https://github.com/venugopal/adb_dart.git
+      path: packages/adb_core
+      ref: v0.1.0
+  adb_ui:
+    git:
+      url: https://github.com/venugopal/adb_dart.git
+      path: packages/adb_ui
+      ref: v0.1.0
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^5.0.0

@@ -1,0 +1,9 @@
+name: adb_suite_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+workspace:
+  - packages/feature_logcat
+  - packages/feature_stats

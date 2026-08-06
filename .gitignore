@@ -1,0 +1,26 @@
+# Local dependency overrides pointing at a sibling adb_dart checkout.
+# Machine-specific -- every developer writes their own. See README.
+pubspec_overrides.yaml
+
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Signing and release credentials never belong in git.
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+ios/Runner/GoogleService-Info.plist
+android/key.properties
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# macOS
+.DS_Store

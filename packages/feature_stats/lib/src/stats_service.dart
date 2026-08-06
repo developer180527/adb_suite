@@ -38,19 +38,27 @@ class StatsService {
   /// Previous CPU counters. Usage is a delta, so the first sample has none.
   List<CpuSnapshot>? _previousCpu;
 
-  static const _delimiter = '###ADBSTATS###';
+  /// Section separator.
+  ///
+  /// Deliberately contains no `#`: that character starts a comment in `sh`,
+  /// so an unquoted `###...` delimiter silently comments out the remainder of
+  /// the line and every section comes back empty. The echoes below are quoted
+  /// as a second line of defence.
+  static const delimiter = '===ADBSTATS===';
 
+  /// The batched poll. Public so its shell-safety can be unit tested.
+  ///
   /// `dumpsys battery` is the slow part; the /proc reads are nearly free.
-  static const _command =
-      'echo $_delimiter; cat /proc/stat; '
-      'echo $_delimiter; cat /proc/meminfo; '
-      'echo $_delimiter; cat /proc/uptime; '
-      'echo $_delimiter; dumpsys battery';
+  static const command =
+      "echo '$delimiter'; cat /proc/stat; "
+      "echo '$delimiter'; cat /proc/meminfo; "
+      "echo '$delimiter'; cat /proc/uptime; "
+      "echo '$delimiter'; dumpsys battery";
 
   /// Takes one sample. The first call returns null CPU usage — there is no
   /// earlier reading to diff against.
   Future<DeviceStats> sample() async {
-    final result = await _session.shell.run(_command);
+    final result = await _session.shell.run(command);
     if (result.exitCode != null && result.exitCode != 0 &&
         result.stdout.trim().isEmpty) {
       throw AdbFailure(
@@ -59,7 +67,7 @@ class StatsService {
       );
     }
 
-    final sections = result.stdout.split(_delimiter);
+    final sections = result.stdout.split(delimiter);
     // Leading empty section before the first delimiter, then four bodies.
     String section(int index) =>
         index + 1 < sections.length ? sections[index + 1] : '';

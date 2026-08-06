@@ -1,5 +1,5 @@
-name: feature_stats
-description: Live CPU, memory, and battery statistics for a connected device.
+name: feature_files
+description: Remote file browsing, transfer, and management for a device.
 version: 0.1.0
 publish_to: none
 resolution: workspace

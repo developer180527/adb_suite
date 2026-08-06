@@ -5,5 +5,25 @@ environment:
   sdk: ^3.9.0
 
 workspace:
+  - apps/adb_files
+  - packages/feature_files
   - packages/feature_logcat
   - packages/feature_stats
+
+# adb_ui declares `adb_core: ^0.1.0` from pub.dev, because a package containing
+# git dependencies cannot be published. Until adb_core is actually on pub.dev,
+# that hosted constraint is unsatisfiable and pub refuses to unify it with the
+# git-sourced adb_core our features pin. This override forces both to the same
+# git source.
+#
+# Delete this block once adb_core and adb_ui are published — plain hosted
+# constraints will then resolve on their own.
+#
+# Note: a local pubspec_overrides.yaml *replaces* this section entirely, which
+# is what lets developers point at a sibling checkout while CI uses the tag.
+dependency_overrides:
+  adb_core:
+    git:
+      url: https://github.com/developer180527/adb_dart.git
+      path: packages/adb_core
+      ref: v0.2.0

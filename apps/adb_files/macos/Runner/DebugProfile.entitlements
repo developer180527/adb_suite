@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Sandbox is OFF deliberately.
+
+	     This app drives the adb daemon, which needs two things the sandbox
+	     forbids:
+	       1. Executing /path/to/adb to start the server. The sandbox blocks
+	          launching executables outside the app bundle.
+	       2. Connecting to 127.0.0.1:5037 and writing pulled files to
+	          arbitrary user-chosen locations.
+
+	     Consequence: this app cannot ship on the Mac App Store. Direct
+	     distribution still works -- Developer ID signing and notarization do
+	     not require sandboxing. -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+</dict>
+</plist>

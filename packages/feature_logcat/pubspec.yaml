@@ -13,14 +13,14 @@ dependencies:
   # at a local checkout during development.
   adb_core:
     git:
-      url: https://github.com/venugopal/adb_dart.git
+      url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_core
-      ref: v0.1.0
+      ref: v0.2.0
   adb_ui:
     git:
-      url: https://github.com/venugopal/adb_dart.git
+      url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_ui
-      ref: v0.1.0
+      ref: v0.2.0
   flutter:
     sdk: flutter
 

@@ -1,0 +1,40 @@
+name: adb_files
+description: A desktop file manager for Android devices.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  adb_core:
+    git:
+      url: https://github.com/developer180527/adb_dart.git
+      path: packages/adb_core
+      ref: v0.2.0
+  adb_ui:
+    git:
+      url: https://github.com/developer180527/adb_dart.git
+      path: packages/adb_ui
+      ref: v0.2.0
+  feature_files:
+    path: ../../packages/feature_files
+  feature_stats:
+    path: ../../packages/feature_stats
+  flutter:
+    sdk: flutter
+  # Both directions plus lazy virtual files, so dragging a device file
+  # out to Finder can download on drop instead of pre-fetching.
+  super_drag_and_drop: ^0.8.0
+  # Native save/choose-folder panels (flutter/packages, first-party).
+  file_selector: ^1.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

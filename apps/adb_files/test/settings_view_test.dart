@@ -9,17 +9,23 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   late Directory dir;
+  late File file;
   late AppSettings settings;
 
   setUp(() async {
     // A temp file, never the real one: an earlier version of these tests
     // wrote to the user's actual preferences and changed their theme.
     dir = await Directory.systemTemp.createTemp('adb_files_settings_view');
-    settings = await AppSettings.load(file: File('${dir.path}/settings.json'));
+    file = File('${dir.path}/settings.json');
+    settings = await AppSettings.load(file: file);
   });
 
   tearDown(() async {
     BuildInfo.debugSet(null);
+    // The theme picker fires its save without awaiting it. Windows cannot
+    // delete a directory holding a file with an open handle, so skipping this
+    // fails on Windows CI while passing on macOS and Linux.
+    await settings.flush();
     await dir.delete(recursive: true);
   });
 
@@ -93,5 +99,10 @@ void main() {
     await tester.tap(find.text('Dark'));
     await tester.pumpAndSettle();
     expect(settings.themeMode, ThemeMode.dark);
+
+    // The choice is only useful if it survives a relaunch, so assert the file
+    // rather than just the in-memory value.
+    await settings.flush();
+    expect((await AppSettings.load(file: file)).themeMode, ThemeMode.dark);
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -17,6 +18,26 @@ void main() {
     file = File('${dir.path}/settings.json');
   });
   tearDown(() => dir.deleteSync(recursive: true));
+
+  test('serialises rapid unawaited saves into valid JSON', () async {
+    final settings = await AppSettings.load(file: file);
+
+    // Exactly how the UI drives it: the segmented button does not await.
+    // Concurrent writeAsString calls on one path can interleave and leave
+    // JSON that fails to parse, which would silently reset the preference.
+    unawaited(settings.setThemeMode(ThemeMode.dark));
+    unawaited(settings.setThemeMode(ThemeMode.light));
+    unawaited(settings.setThemeMode(ThemeMode.dark));
+    await settings.flush();
+
+    expect(jsonDecode(file.readAsStringSync()), {'themeMode': 'dark'});
+    expect((await AppSettings.load(file: file)).themeMode, ThemeMode.dark);
+  });
+
+  test('flush completes even when nothing was ever written', () async {
+    final settings = await AppSettings.load(file: file);
+    await expectLater(settings.flush(), completes);
+  });
 
   test('defaults to following the system appearance', () async {
     final settings = await AppSettings.load(file: file);

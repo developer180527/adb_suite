@@ -67,6 +67,19 @@ jobs:
       - run: flutter test
         working-directory: apps/adb_files
 
+      # The app is most of the shipped code but not all of it: these packages
+      # go into the binary too, so a release that never ran their tests is
+      # shipping untested code.
+      - name: Test packages
+        shell: bash
+        run: |
+          for pkg in packages/feature_files packages/feature_stats \
+                     packages/feature_logcat; do
+            echo "::group::$pkg"
+            (cd "$pkg" && flutter test)
+            echo "::endgroup::"
+          done
+
       # No signing on macOS here. A free Apple ID only issues an "Apple
       # Development" certificate, which Gatekeeper rejects on other machines,
       # so signing with it in CI buys nothing. To sign properly, import a

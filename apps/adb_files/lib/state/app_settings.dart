@@ -14,6 +14,9 @@ class AppSettings extends ChangeNotifier {
   final File _file;
   ThemeMode _themeMode;
 
+  /// Tail of the write queue. See [_save].
+  Future<void> _pending = Future.value();
+
   ThemeMode get themeMode => _themeMode;
 
   /// Loads settings, falling back to defaults if anything is missing or
@@ -47,7 +50,25 @@ class AppSettings extends ChangeNotifier {
     await _save();
   }
 
-  Future<void> _save() async {
+  /// Queues a write behind any already in flight.
+  ///
+  /// The UI calls [setThemeMode] without awaiting it, so a user toggling the
+  /// appearance twice in quick succession would otherwise have two
+  /// `writeAsString` calls racing on one path — which can interleave into
+  /// invalid JSON, and the next launch would silently fall back to defaults.
+  Future<void> _save() {
+    return _pending = _pending.then((_) => _write());
+  }
+
+  /// Completes once every queued write has landed.
+  ///
+  /// Mainly for tests: on Windows a directory containing a file with an open
+  /// handle cannot be deleted, so a test that taps the theme picker and then
+  /// removes its temp directory fails unless it waits for the write. POSIX
+  /// allows that delete, which is why it only ever broke on Windows CI.
+  Future<void> flush() => _pending;
+
+  Future<void> _write() async {
     try {
       _file.parent.createSync(recursive: true);
       await _file.writeAsString(

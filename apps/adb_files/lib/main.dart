@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'screens/browser_screen.dart';
 import 'screens/connect_screen.dart';
+import 'state/app_options.dart';
 import 'state/connection_controller.dart';
 
-void main() {
+void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const AdbFilesApp());
+  // Loads libmpv. Must run before any Player is constructed.
+  MediaKit.ensureInitialized();
+  runApp(AdbFilesApp(options: AppOptions.parse(args)));
 }
 
 class AdbFilesApp extends StatefulWidget {
-  const AdbFilesApp({super.key});
+  const AdbFilesApp({this.options = const AppOptions(), super.key});
+
+  final AppOptions options;
 
   @override
   State<AdbFilesApp> createState() => _AdbFilesAppState();
@@ -47,6 +53,7 @@ class _AdbFilesAppState extends State<AdbFilesApp> {
             return BrowserScreen(
               key: ValueKey(_connection.device?.serial),
               connection: _connection,
+              initialPath: widget.options.initialPath,
             );
           }
           return ConnectScreen(controller: _connection);

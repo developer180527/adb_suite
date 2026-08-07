@@ -13,12 +13,12 @@ dependencies:
     git:
       url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_core
-      ref: v0.2.0
+      ref: v0.3.0
   adb_ui:
     git:
       url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_ui
-      ref: v0.2.0
+      ref: v0.3.0
   feature_files:
     path: ../../packages/feature_files
   feature_stats:
@@ -30,6 +30,12 @@ dependencies:
   super_drag_and_drop: ^0.8.0
   # Native save/choose-folder panels (flutter/packages, first-party).
   file_selector: ^1.0.3
+  # Real audio/video playback on every desktop platform (libmpv).
+  media_kit: ^1.1.10
+  media_kit_video: ^1.2.4
+  media_kit_libs_video: ^1.0.4
+  # PDFium-backed PDF rendering.
+  pdfrx: ^1.0.0
 
 dev_dependencies:
   flutter_test:

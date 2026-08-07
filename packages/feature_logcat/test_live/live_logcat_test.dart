@@ -83,8 +83,11 @@ void main() {
 
     test('keeps the buffer banner rather than dropping it', () async {
       final entries = await logcat.dump(tail: 500);
+      // Match the banner's actual shape. Substring-matching "beginning of"
+      // also catches ordinary log messages containing that phrase, which are
+      // correctly *parsed* and would fail the assertion below.
       final banners =
-          entries.where((e) => e.raw.contains('beginning of')).toList();
+          entries.where((e) => e.raw.startsWith('---------')).toList();
       // Not guaranteed in every window, but when present it must be retained
       // as unparsed rather than silently discarded.
       for (final banner in banners) {

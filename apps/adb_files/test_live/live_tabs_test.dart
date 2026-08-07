@@ -5,6 +5,8 @@
 @Timeout(Duration(seconds: 90))
 library;
 
+import 'dart:io';
+
 import 'package:adb_core/adb_core.dart';
 import 'package:adb_files/state/tabs_controller.dart';
 import 'package:feature_files/feature_files.dart';
@@ -14,6 +16,8 @@ void main() {
   late HostTransport transport;
   late AdbSession session;
   late FileService files;
+  late RemoteFileServer server;
+  late Directory cacheDir;
 
   setUpAll(() async {
     transport = await HostTransport.local();
@@ -21,14 +25,23 @@ void main() {
     if (online.isEmpty) fail('No online device.');
     session = AdbSession(await transport.connect(online.first.serial), online.first);
     files = FileService(session);
+    server = RemoteFileServer(session);
+    cacheDir = Directory.systemTemp.createTempSync('tabs_cache');
   });
 
   tearDownAll(() async {
+    await server.stop();
+    cacheDir.deleteSync(recursive: true);
     await session.close();
     await transport.close();
   });
 
-  TabsController make() => TabsController(service: files);
+  TabsController make() => TabsController(
+        service: files,
+        session: session,
+        server: server,
+        opener: FileOpener(files, cacheDirectory: cacheDir),
+      );
 
   test('starts with exactly one tab and hides the strip', () {
     final tabs = make();

@@ -1,8 +1,10 @@
+import 'dart:convert';
+
 import 'package:adb_core/adb_core.dart';
 
 import 'directory_walk.dart';
 import 'models/directory_listing.dart';
-import 'posix_shell.dart';
+
 import 'remote_path.dart';
 
 /// Browsing and file management on a device.
@@ -191,6 +193,28 @@ class FileService {
     RemotePath.normalize(remotePath),
     onProgress: onProgress,
   );
+
+  /// Reads a small text file over the shell.
+  ///
+  /// For metadata and config only — a real download should use [pull], which
+  /// streams and reports progress.
+  Future<String> readText(String path) async {
+    final result = await _run(
+      'cat ${PosixShell.quote(RemotePath.normalize(path))}',
+    );
+    return result.stdout;
+  }
+
+  /// Writes a small text file without needing a local temp file.
+  ///
+  /// The content is base64-encoded on the way in. Interpolating raw text into
+  /// a shell command would break on quotes, `$`, backticks, and newlines —
+  /// exactly the characters JSON is full of.
+  Future<void> writeText(String path, String content) async {
+    final quoted = PosixShell.quote(RemotePath.normalize(path));
+    final encoded = base64.encode(utf8.encode(content));
+    await _run("echo '$encoded' | base64 -d > $quoted");
+  }
 
   Future<void> createDirectory(String path) async {
     // -p so creating an existing directory is not an error, and intermediate

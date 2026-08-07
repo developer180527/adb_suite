@@ -9,10 +9,17 @@ export 'src/file_browser_controller.dart';
 export 'src/file_service.dart';
 export 'src/models/directory_listing.dart';
 export 'src/models/file_sort.dart';
-export 'src/posix_shell.dart';
+// Moved to adb_core: any code building shell commands needs it, and
+// adb_core owns ShellService. Re-exported so callers are unaffected.
+export 'package:adb_core/adb_core.dart' show PosixShell;
 export 'src/remote_path.dart';
 export 'src/transfer_manager.dart';
 export 'src/widgets/file_browser.dart';
 export 'src/file_opener.dart';
 export 'src/models/file_action.dart';
 export 'src/directory_walk.dart';
+export 'src/trash_service.dart';
+export 'src/remote_file_server.dart';
+export 'src/preview/preview_controller.dart';
+export 'src/preview/preview_kind.dart';
+export 'src/preview/preview_view.dart';

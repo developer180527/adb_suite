@@ -8,17 +8,27 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../state/app_options.dart';
 import '../state/connection_controller.dart';
 import '../state/tabs_controller.dart';
+import '../widgets/document_viewer.dart';
 import '../widgets/drag_drop.dart';
+import '../widgets/media_viewer.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/tab_bar.dart';
 import '../widgets/transfer_panel.dart';
 
 class BrowserScreen extends StatefulWidget {
-  const BrowserScreen({required this.connection, super.key});
+  const BrowserScreen({
+    required this.connection,
+    this.initialPath,
+    super.key,
+  });
 
   final ConnectionController connection;
+
+  /// Where the first tab opens. Set when this window was torn off a tab.
+  final String? initialPath;
 
   @override
   State<BrowserScreen> createState() => _BrowserScreenState();
@@ -29,6 +39,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
   late final FileService _files;
   late final TransferManager _transfers;
   late final FileOpener _opener;
+  late final TrashService _trash;
+  late final RemoteFileServer _server;
 
   final _focusNode = FocusNode();
   ({int available, int total})? _freeSpace;
@@ -58,7 +70,15 @@ class _BrowserScreenState extends State<BrowserScreen> {
       _files,
       cacheDirectory: Directory('$home/Library/Caches/com.adbsuite.adbFiles'),
     );
-    _tabs = TabsController(service: _files)..addListener(_onTabsChanged);
+    _trash = TrashService(_files);
+    _server = RemoteFileServer(widget.connection.session!);
+    _tabs = TabsController(
+      service: _files,
+      session: widget.connection.session!,
+      server: _server,
+      opener: _opener,
+      initialPath: widget.initialPath ?? '/sdcard',
+    )..addListener(_onTabsChanged);
     _tabs.loadActive();
     _refreshFreeSpace();
   }
@@ -68,6 +88,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     _tabs
       ..removeListener(_onTabsChanged)
       ..dispose();
+    unawaited(_server.stop());
     _focusNode.dispose();
     super.dispose();
   }
@@ -109,7 +130,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
   /// a plugin, this launches another instance of the app bundle. `open -n`
   /// forces a new process, and each instance gets its own adb session — the
   /// adb server handles concurrent clients fine.
-  Future<void> _newWindow() async {
+  Future<void> _newWindow({List<String> args = const []}) async {
     if (!Platform.isMacOS) {
       _toast('New windows are only supported on macOS for now.');
       return;
@@ -121,7 +142,43 @@ class _BrowserScreenState extends State<BrowserScreen> {
       _toast('Cannot locate the app bundle to open a new window.');
       return;
     }
-    await Process.run('open', ['-n', bundle.path]);
+    // `-a` is required: `open -n <path> --args ...` silently discards the
+    // arguments, which is how a detached window ends up at the default path
+    // and size instead of the ones it was given.
+    await Process.run('open', [
+      '-n',
+      '-a',
+      bundle.path,
+      if (args.isNotEmpty) ...['--args', ...args],
+    ]);
+  }
+
+  /// Tears a tab out into its own window, Chrome-style.
+  ///
+  /// The new window is a new process, so the tab's directory and this
+  /// window's size travel in argv. Size is read natively before the engine
+  /// starts, so the detached window never appears at the wrong size and then
+  /// resizes.
+  Future<void> _detachTab(int index) async {
+    // The window *is* the last tab; there is nothing to detach it from.
+    if (!_tabs.hasMultiple) return;
+    final tab = _tabs.tabs[index];
+    final path = tab.browser.path;
+
+    final view = View.of(context);
+    final size = view.physicalSize / view.devicePixelRatio;
+
+    await _newWindow(
+      args: AppOptions.buildArgs(
+        path: path,
+        width: size.width,
+        height: size.height,
+      ),
+    );
+
+    // Only drop the tab once the new window has been asked for, so a failed
+    // spawn does not lose it.
+    _tabs.closeTab(index);
   }
 
   // --- actions ---
@@ -244,6 +301,12 @@ class _BrowserScreenState extends State<BrowserScreen> {
       await _browser.open(entry);
       return;
     }
+    // Previewing in a tab streams rather than downloading, so it is the
+    // default; "Open in default app" stays available for a real local copy.
+    if (!revealOnly) {
+      _tabs.openPreview(entry);
+      return;
+    }
     if (_opening.contains(entry.path)) return;
 
     final cached = _opener.isFresh(entry);
@@ -257,6 +320,27 @@ class _BrowserScreenState extends State<BrowserScreen> {
       } else {
         await FileOpener.openLocal(file.path);
       }
+    } on Object catch (e) {
+      _toast('Could not open ${entry.name}: $e');
+    } finally {
+      if (mounted) setState(() => _opening.remove(entry.path));
+    }
+  }
+
+  /// Downloads to the cache and hands the file to the desktop.
+  ///
+  /// Distinct from preview: this is for when the user genuinely wants the
+  /// file in another application, which needs a real path on disk.
+  Future<void> _openExternally(AdbFileEntry entry) async {
+    if (entry.isDirectory) return;
+    if (_opening.contains(entry.path)) return;
+
+    final cached = _opener.isFresh(entry);
+    setState(() => _opening.add(entry.path));
+    if (!cached) _toast('Downloading ${entry.name}…');
+    try {
+      final file = await _opener.ensureLocal(entry);
+      await FileOpener.openLocal(file.path);
     } on Object catch (e) {
       _toast('Could not open ${entry.name}: $e');
     } finally {
@@ -314,21 +398,121 @@ class _BrowserScreenState extends State<BrowserScreen> {
     unawaited(_refreshFreeSpace());
   }
 
+  /// Moves to the trash by default; holding Shift deletes outright.
+  ///
+  /// Trashing is a rename within the same filesystem, so it is instant even
+  /// for a folder of videos, and it is recoverable — which matters more here
+  /// than in a normal file manager, because there is no system-level undo for
+  /// anything done over ADB.
   Future<void> _delete(List<AdbFileEntry> entries) async {
     if (entries.isEmpty) return;
+    final permanent = HardwareKeyboard.instance.isShiftPressed;
+
+    if (permanent) {
+      final confirmed = await _confirmPermanent(entries);
+      if (confirmed != true) return;
+    }
+
+    try {
+      final trashed = <TrashedItem>[];
+      for (final entry in entries) {
+        if (permanent) {
+          await _files.delete(entry.path, recursive: entry.isDirectory);
+        } else {
+          trashed.add(await _trash.moveToTrash(entry));
+        }
+      }
+      await _browser.refresh();
+      unawaited(_refreshFreeSpace());
+
+      if (!mounted) return;
+      if (permanent) {
+        _toast('Deleted ${entries.length} item(s) permanently');
+      } else {
+        _showUndo(trashed);
+      }
+    } on Object catch (e) {
+      _toast('Delete failed: $e');
+    }
+  }
+
+  Future<bool?> _confirmPermanent(List<AdbFileEntry> entries) => showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(
+        entries.length == 1
+            ? 'Permanently delete "${entries.single.name}"?'
+            : 'Permanently delete ${entries.length} items?',
+      ),
+      content: Text(
+        entries.any((e) => e.isDirectory)
+            ? 'Folders and everything inside them will be removed from the '
+                  'device. This bypasses the Trash and cannot be undone.'
+            : 'This bypasses the Trash and cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Delete Permanently'),
+        ),
+      ],
+    ),
+  );
+
+  /// A snackbar with a working Undo, so trashing needs no confirmation at all.
+  void _showUndo(List<TrashedItem> trashed) {
+    if (trashed.isEmpty || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            trashed.length == 1
+                ? 'Moved "${trashed.single.name}" to Trash'
+                : 'Moved ${trashed.length} items to Trash',
+          ),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () async {
+              try {
+                for (final item in trashed) {
+                  await _trash.restore(item);
+                }
+                await _browser.refresh();
+              } on Object catch (e) {
+                _toast('Could not restore: $e');
+              }
+            },
+          ),
+        ),
+      );
+  }
+
+  Future<void> _emptyTrash() async {
+    final items = await _trash.list();
+    if (items.isEmpty) {
+      _toast('Trash is empty');
+      return;
+    }
+    if (!mounted) return;
+
+    final size = await _trash.size();
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(
-          entries.length == 1
-              ? 'Delete "${entries.single.name}"?'
-              : 'Delete ${entries.length} items?',
-        ),
+        title: Text('Empty Trash (${items.length} items)?'),
         content: Text(
-          entries.any((e) => e.isDirectory)
-              ? 'Folders and everything inside them will be removed from the '
-                    'device. This cannot be undone.'
-              : 'This cannot be undone.',
+          '${formatBytes(size)} will be permanently removed from the device. '
+          'This cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -340,22 +524,17 @@ class _BrowserScreenState extends State<BrowserScreen> {
               backgroundColor: Theme.of(context).colorScheme.error,
             ),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+            child: const Text('Empty Trash'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
 
-    try {
-      for (final entry in entries) {
-        await _files.delete(entry.path, recursive: entry.isDirectory);
-      }
-      await _browser.refresh();
-      unawaited(_refreshFreeSpace());
-    } on Object catch (e) {
-      _toast('Delete failed: $e');
-    }
+    await _trash.empty();
+    await _browser.refresh();
+    unawaited(_refreshFreeSpace());
+    if (mounted) _toast('Trash emptied');
   }
 
   Future<void> _rename(AdbFileEntry entry) async {
@@ -482,7 +661,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       case FileAction.open:
         if (selection.length == 1) await _open(selection.single);
       case FileAction.openWith:
-        if (selection.length == 1) await _open(selection.single, revealOnly: true);
+        if (selection.length == 1) await _openExternally(selection.single);
       case FileAction.download:
         await _download(selection);
       case FileAction.rename:
@@ -501,6 +680,41 @@ class _BrowserScreenState extends State<BrowserScreen> {
         if (selection.length == 1) await _showProperties(selection.single);
     }
   }
+
+  /// Viewers that need heavy native libraries live here rather than in
+  /// feature_files, so the package stays usable without libmpv or PDFium.
+  Map<PreviewKind, PreviewViewerBuilder> get _previewBuilders => {
+    PreviewKind.video: (context, preview) => MediaViewer(
+      key: ValueKey('video-${preview.entry.path}'),
+      url: preview.url!,
+      isAudio: false,
+      title: preview.entry.name,
+    ),
+    PreviewKind.audio: (context, preview) => MediaViewer(
+      key: ValueKey('audio-${preview.entry.path}'),
+      url: preview.url!,
+      isAudio: true,
+      title: preview.entry.name,
+    ),
+    PreviewKind.pdf: (context, preview) {
+      final file = preview.localFile;
+      if (file == null) return null;
+      return DevicePdfViewer(
+        key: ValueKey('pdf-${preview.entry.path}'),
+        file: file,
+      );
+    },
+    PreviewKind.document: (context, preview) {
+      final file = preview.localFile;
+      if (file == null || !QuickLookViewer.isSupported) return null;
+      return QuickLookViewer(
+        key: ValueKey('doc-${preview.entry.path}'),
+        file: file,
+        name: preview.entry.name,
+        onOpenExternally: () => unawaited(_openExternally(preview.entry)),
+      );
+    },
+  };
 
   // --- keyboard ---
 
@@ -595,7 +809,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
         return KeyEventResult.handled;
 
       case LogicalKeyboardKey.escape:
-        _browser.clearSelection();
+        if (_tabs.active.isPreview) {
+          _tabs.closePreview(_tabs.active);
+        } else {
+          _browser.clearSelection();
+        }
         return KeyEventResult.handled;
 
       case LogicalKeyboardKey.delete:
@@ -689,6 +907,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   : () => unawaited(_download(selection)),
             ),
             PlatformMenuItem(
+              label: 'Empty Trash…',
+              onSelected: () => unawaited(_emptyTrash()),
+            ),
+            PlatformMenuItem(
               label: 'Get Info',
               shortcut: const SingleActivator(LogicalKeyboardKey.keyI, meta: true),
               onSelected: selection.length == 1
@@ -755,9 +977,22 @@ class _BrowserScreenState extends State<BrowserScreen> {
                     onDisconnect: widget.connection.disconnect,
                   ),
                   const Divider(height: 1),
-                  BrowserTabBar(controller: _tabs, onNewTab: _newTab),
+                  BrowserTabBar(
+                    controller: _tabs,
+                    onNewTab: _newTab,
+                    onDetach: (i) => unawaited(_detachTab(i)),
+                  ),
                   Expanded(
-                    child: Focus(
+                    child: _tabs.active.isPreview
+                        ? PreviewView(
+                            key: ValueKey('preview-${_tabs.active.id}'),
+                            controller: _tabs.active.preview!,
+                            builders: _previewBuilders,
+                            onOpenExternally: () => unawaited(
+                              _openExternally(_tabs.active.preview!.entry),
+                            ),
+                          )
+                        : Focus(
                       focusNode: _focusNode,
                       autofocus: true,
                       onKeyEvent: _onKey,
@@ -874,7 +1109,7 @@ class _Toolbar extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete',
+            tooltip: 'Move to Trash  (hold Shift to delete permanently)',
             onPressed: hasSelection ? onDelete : null,
           ),
           const SizedBox(width: 8),

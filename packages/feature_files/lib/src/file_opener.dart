@@ -101,8 +101,22 @@ class FileOpener {
     return file;
   }
 
+  /// Whether this platform can hand a file to another application.
+  ///
+  /// False on iOS and iPadOS: they forbid spawning processes entirely, so
+  /// there is no `open`/`xdg-open` to call. Callers must check this rather
+  /// than let the attempt throw — previewing in-app is the alternative there.
+  static bool get canOpenExternally =>
+      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+
   /// Hands an existing local path to the OS.
   static Future<void> openLocal(String path) async {
+    if (!canOpenExternally) {
+      throw AdbUnsupported(
+        'Opening files in another app is not available on '
+        '${Platform.operatingSystem}.',
+      );
+    }
     final (command, args) = _openCommand(path);
     final result = await Process.run(command, args);
     if (result.exitCode != 0) {
@@ -114,6 +128,11 @@ class FileOpener {
 
   /// Shows the file selected in the platform file manager.
   static Future<void> revealLocal(String path) async {
+    if (!canOpenExternally) {
+      throw AdbUnsupported(
+        'Revealing files is not available on ${Platform.operatingSystem}.',
+      );
+    }
     if (Platform.isMacOS) {
       await Process.run('open', ['-R', path]);
     } else if (Platform.isWindows) {

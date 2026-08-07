@@ -16,6 +16,7 @@ class FileBrowser extends StatelessWidget {
     this.onOpenFile,
     this.onAction,
     this.rowWrapper,
+    this.menuPresenter,
     this.showNavigationBar = true,
     super.key,
   });
@@ -32,6 +33,9 @@ class FileBrowser extends StatelessWidget {
   /// a drag-and-drop dependency — which matters because the usual one needs a
   /// Rust toolchain and has no place in an iPad build.
   final Widget Function(BuildContext, AdbFileEntry, Widget)? rowWrapper;
+
+  /// Supplies the platform's own context menu. Null uses the Material one.
+  final ContextMenuPresenter? menuPresenter;
 
   /// Set false when the host app supplies its own navigation controls and
   /// places [FileBreadcrumbs] elsewhere — a Finder-style path bar along the
@@ -54,6 +58,7 @@ class FileBrowser extends StatelessWidget {
               onOpenFile: onOpenFile,
               onAction: onAction,
               rowWrapper: rowWrapper,
+              menuPresenter: menuPresenter,
             ),
           ),
         ],
@@ -62,6 +67,17 @@ class FileBrowser extends StatelessWidget {
   }
 }
 
+/// Presents a context menu and returns the chosen action.
+///
+/// Injected so an app can substitute the platform's own menu — on macOS that
+/// is a real NSMenu — without this package taking a dependency on it.
+typedef ContextMenuPresenter = Future<FileAction?> Function({
+  required BuildContext context,
+  required Offset globalPosition,
+  required List<FileAction?> items,
+  required List<AdbFileEntry> selection,
+});
+
 /// Shows the context menu at the pointer and reports the choice.
 Future<void> showFileContextMenu({
   required BuildContext context,
@@ -69,7 +85,19 @@ Future<void> showFileContextMenu({
   required List<FileAction?> items,
   required List<AdbFileEntry> selection,
   required void Function(FileAction, List<AdbFileEntry>)? onAction,
+  ContextMenuPresenter? presenter,
 }) async {
+  if (presenter != null) {
+    final chosen = await presenter(
+      context: context,
+      globalPosition: globalPosition,
+      items: items,
+      selection: selection,
+    );
+    if (chosen != null) onAction?.call(chosen, selection);
+    return;
+  }
+
   final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
   if (overlay == null) return;
 
@@ -105,12 +133,14 @@ class _Body extends StatelessWidget {
     this.onOpenFile,
     this.onAction,
     this.rowWrapper,
+    this.menuPresenter,
   });
 
   final FileBrowserController controller;
   final void Function(AdbFileEntry)? onOpenFile;
   final void Function(FileAction, List<AdbFileEntry>)? onAction;
   final Widget Function(BuildContext, AdbFileEntry, Widget)? rowWrapper;
+  final ContextMenuPresenter? menuPresenter;
 
   @override
   Widget build(BuildContext context) {
@@ -186,6 +216,7 @@ class _Body extends StatelessWidget {
               items: FileAction.backgroundMenu,
               selection: const [],
               onAction: onAction,
+              presenter: menuPresenter,
             ),
             onTap: controller.clearSelection,
             child: ListView.builder(
@@ -211,6 +242,7 @@ class _Body extends StatelessWidget {
                       items: FileAction.rowMenu,
                       selection: controller.selectedEntries,
                       onAction: onAction,
+                      presenter: menuPresenter,
                     );
                   },
                 );

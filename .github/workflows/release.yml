@@ -1,0 +1,117 @@
+name: Release
+
+# Flutter desktop builds are host-only — `flutter build linux` refuses to run
+# on macOS and vice versa — so each platform is built on its own runner. This
+# is the only way to produce all three from one place.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: 3.44.6
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Keep going: a Linux packaging failure should not deprive you of the
+      # macOS and Windows artifacts.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            artifact: '*.dmg'
+          - os: ubuntu-latest
+            name: Linux
+            artifact: '*.tar.gz'
+          - os: windows-latest
+            name: Windows
+            artifact: '*.zip'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Required: the build number is `git rev-list --count HEAD`, which
+          # returns 1 on the shallow clone Actions makes by default.
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          # ninja/gtk are Flutter's own desktop requirements; libmpv backs
+          # media_kit's audio and video playback.
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libmpv-dev mpv libsecret-1-dev
+
+      - run: flutter pub get
+        working-directory: apps/adb_files
+
+      - run: flutter analyze
+        working-directory: apps/adb_files
+
+      - run: flutter test
+        working-directory: apps/adb_files
+
+      # No signing on macOS here. A free Apple ID only issues an "Apple
+      # Development" certificate, which Gatekeeper rejects on other machines,
+      # so signing with it in CI buys nothing. To sign properly, import a
+      # "Developer ID Application" certificate into a temporary keychain
+      # before this step and drop the --no-sign flag.
+      - name: Build release
+        shell: bash
+        working-directory: apps/adb_files
+        run: ./tool/release.sh --no-sign
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adb_files-${{ matrix.name }}
+          path: apps/adb_files/build/release/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only tag pushes create a release; a manual run just leaves artifacts.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            ### Installing
+
+            **macOS** — open the `.dmg` and drag the app to Applications.
+            The build is unsigned, so the first launch needs
+            right-click → Open (Gatekeeper blocks a double-click), or:
+            `xattr -dr com.apple.quarantine /Applications/adb_files.app`
+
+            **Windows** — unzip and run `adb_files.exe`. SmartScreen will warn
+            on first run; choose More info → Run anyway.
+
+            **Linux** — extract and run `./install.sh` (installs to
+            `~/.local`, no root needed). Requires `mpv`/`libmpv`.
+
+            All platforms need the Android platform-tools `adb` on PATH, or
+            set the path in the app.

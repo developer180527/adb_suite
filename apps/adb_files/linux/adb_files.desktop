@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+GenericName=Android File Manager
+Comment=Browse and transfer files on an Android device over ADB
+Exec=adb_files
+Icon=adb_files
+Terminal=false
+Categories=Utility;FileTools;
+Keywords=android;adb;files;transfer;

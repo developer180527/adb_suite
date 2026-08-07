@@ -1,38 +1,58 @@
 import 'package:flutter/material.dart';
+import 'package:pdfrx/pdfrx.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'screens/browser_screen.dart';
+import 'theme.dart';
 import 'screens/connect_screen.dart';
 import 'state/app_options.dart';
+import 'state/app_settings.dart';
 import 'state/connection_controller.dart';
 
-void main(List<String> args) {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Loads libmpv. Must run before any Player is constructed.
+  // Loads libmpv. Measured at ~7ms, so it is not worth deferring.
   MediaKit.ensureInitialized();
-  runApp(AdbFilesApp(options: AppOptions.parse(args)));
+  // pdfrx 2.x needs this before any PdfDocument is opened outside a widget.
+  pdfrxFlutterInitialize();
+  final settings = await AppSettings.load();
+  runApp(AdbFilesApp(options: AppOptions.parse(args), settings: settings));
 }
 
 class AdbFilesApp extends StatefulWidget {
-  const AdbFilesApp({this.options = const AppOptions(), super.key});
+  const AdbFilesApp({
+    required this.settings,
+    this.options = const AppOptions(),
+    super.key,
+  });
 
   final AppOptions options;
+  final AppSettings settings;
 
   @override
   State<AdbFilesApp> createState() => _AdbFilesAppState();
 }
 
 class _AdbFilesAppState extends State<AdbFilesApp> {
-  final _connection = ConnectionController();
+  late final _connection = ConnectionController(
+    adbPath: widget.options.adbPath,
+    preferredSerial: widget.options.serial,
+  );
 
   @override
   void initState() {
     super.initState();
     _connection.initialise();
+    // MaterialApp.themeMode is read at build time, so the whole app has to
+    // rebuild when the preference changes.
+    widget.settings.addListener(_onSettingsChanged);
   }
+
+  void _onSettingsChanged() => setState(() {});
 
   @override
   void dispose() {
+    widget.settings.removeListener(_onSettingsChanged);
     _connection.dispose();
     super.dispose();
   }
@@ -42,8 +62,9 @@ class _AdbFilesAppState extends State<AdbFilesApp> {
     return MaterialApp(
       title: 'Files',
       debugShowCheckedModeBanner: false,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
+      theme: AppTheme.of(Brightness.light),
+      darkTheme: AppTheme.of(Brightness.dark),
+      themeMode: widget.settings.themeMode,
       home: AnimatedBuilder(
         animation: _connection,
         builder: (context, _) {
@@ -54,26 +75,12 @@ class _AdbFilesAppState extends State<AdbFilesApp> {
               key: ValueKey(_connection.device?.serial),
               connection: _connection,
               initialPath: widget.options.initialPath,
+              settings: widget.settings,
             );
           }
           return ConnectScreen(controller: _connection);
         },
       ),
-    );
-  }
-
-  static ThemeData _theme(Brightness brightness) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF3DDC84), // Android green
-      brightness: brightness,
-    );
-    return ThemeData(
-      colorScheme: scheme,
-      useMaterial3: true,
-      // Desktop density: the default Material spacing wastes a lot of vertical
-      // room in a file list.
-      visualDensity: VisualDensity.compact,
-      dividerTheme: const DividerThemeData(space: 1, thickness: 1),
     );
   }
 }

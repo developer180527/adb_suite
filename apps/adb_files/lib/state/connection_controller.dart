@@ -43,6 +43,12 @@ enum ConnectionPhase {
 }
 
 class ConnectionController extends ChangeNotifier {
+  ConnectionController({this.adbPath, this.preferredSerial});
+
+  /// Supplied by the window that spawned this one, to skip discovery.
+  final String? adbPath;
+  final String? preferredSerial;
+
   ConnectionPhase _phase = ConnectionPhase.starting;
   HostTransport? _transport;
   AdbSession? _session;
@@ -80,7 +86,18 @@ class ConnectionController extends ChangeNotifier {
     _set(ConnectionPhase.starting);
 
     try {
-      _transport = await HostTransport.local();
+      final handedDown = adbPath;
+      if (handedDown != null) {
+        // A detached window reuses the parent's adb path instead of
+        // searching again. Measured, this does *not* make startup faster --
+        // the cost simply moves to the first daemon round trip. It is kept
+        // because a GUI process launched via `open` does not inherit the
+        // shell's PATH, so `which adb` can fail in the child even though the
+        // parent found it. Handing the answer down removes that failure mode.
+        _transport = HostTransport(binary: AdbBinary(handedDown));
+      } else {
+        _transport = await HostTransport.local();
+      }
     } on AdbBinaryNotFound catch (e) {
       _error = e;
       _set(ConnectionPhase.noAdbBinary);
@@ -89,6 +106,16 @@ class ConnectionController extends ChangeNotifier {
       _error = e;
       _set(ConnectionPhase.failed);
       return;
+    }
+
+    // Attach to the known device immediately rather than waiting for the
+    // first track-devices push. The subscription below still starts, so
+    // disconnects are noticed as usual.
+    final serial = preferredSerial;
+    if (serial != null) {
+      unawaited(
+        connect(AdbDevice(serial: serial, state: AdbDeviceState.device)),
+      );
     }
 
     // trackDevices reconnects internally, so one subscription lasts the whole

@@ -30,12 +30,16 @@ class Sidebar extends StatelessWidget {
     required this.controller,
     required this.deviceName,
     this.freeSpace,
+    this.onOpenSettings,
     super.key,
   });
 
   final FileBrowserController controller;
   final String deviceName;
   final ({int available, int total})? freeSpace;
+
+  /// Opens app settings. Null hides the entry.
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +83,17 @@ class Sidebar extends StatelessWidget {
               ],
             ),
           ),
+          if (onOpenSettings != null) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: _SidebarItem(
+                shortcut: const Shortcut('Settings', '', Icons.settings_outlined),
+                selected: false,
+                onTap: onOpenSettings!,
+              ),
+            ),
+          ],
           if (freeSpace != null) _FreeSpace(space: freeSpace!),
         ],
       ),

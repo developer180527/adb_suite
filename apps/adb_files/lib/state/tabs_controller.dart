@@ -10,7 +10,12 @@ import 'package:flutter/foundation.dart';
 /// the sidebar, path bar, and navigation chrome all stay meaningful — and
 /// closing the preview or navigating up lands somewhere sensible.
 class BrowserTab {
-  BrowserTab({required this.id, required this.browser, this.preview});
+  BrowserTab({
+    required this.id,
+    required this.browser,
+    this.preview,
+    this.isSettings = false,
+  });
 
   final int id;
   final FileBrowserController browser;
@@ -18,12 +23,16 @@ class BrowserTab {
   /// Non-null when this tab is showing a file rather than a directory.
   PreviewController? preview;
 
+  /// True when this tab shows app settings instead of the filesystem.
+  final bool isSettings;
+
   bool get isPreview => preview != null;
 
   /// Keyboard cursor row. Per-tab so switching tabs restores where you were.
   int cursor = 0;
 
   String get title {
+    if (isSettings) return 'Settings';
     final previewing = preview;
     if (previewing != null) return previewing.entry.name;
 
@@ -68,10 +77,11 @@ class TabsController extends ChangeNotifier {
   FileBrowserController get browser => active.browser;
   bool get hasMultiple => _tabs.length > 1;
 
-  BrowserTab _open(String path) {
+  BrowserTab _open(String path, {bool isSettings = false}) {
     final tab = BrowserTab(
       id: _nextId++,
       browser: FileBrowserController(service: _service, initialPath: path),
+      isSettings: isSettings,
     );
     // Retitle when the tab navigates.
     tab.browser.addListener(notifyListeners);
@@ -110,6 +120,27 @@ class TabsController extends ChangeNotifier {
     // navigating up shows the folder without another round trip.
     unawaited(tab.browser.load());
     unawaited(tab.preview!.load());
+  }
+
+  /// Opens app settings in a tab, reusing one if it is already open.
+  ///
+  /// Browsers do the same with their preferences: a second click focuses the
+  /// existing tab rather than stacking duplicates.
+  void openSettings() {
+    final existing = _tabs.indexWhere((t) => t.isSettings);
+    if (existing >= 0) {
+      select(existing);
+      return;
+    }
+    // Anchored at the current directory so the chrome and the Close action
+    // still have somewhere sensible to go back to.
+    final tab = _open(
+      _tabs.isEmpty ? '/sdcard' : browser.path,
+      isSettings: true,
+    );
+    _activeIndex = _tabs.length - 1;
+    notifyListeners();
+    unawaited(tab.browser.load());
   }
 
   /// Turns a preview tab back into a directory listing.

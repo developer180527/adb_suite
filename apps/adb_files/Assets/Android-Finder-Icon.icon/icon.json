@@ -1,0 +1,60 @@
+{
+  "fill" : {
+    "automatic-gradient" : "display-p3:0.43823,0.72314,0.23383,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "glass" : false,
+          "image-name" : "folder-icon-2-main.png",
+          "name" : "folder-icon-2-main",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 0.79,
+            "translation-in-points" : [
+              204.66434520709595,
+              114.85317529495694
+            ]
+          }
+        },
+        {
+          "blend-mode" : "multiply",
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:0.00000,0.97680,0.00000,1.00000"
+              }
+            }
+          ],
+          "glass" : false,
+          "image-name" : "android-white.png",
+          "name" : "android-white",
+          "position" : {
+            "scale" : 1.57,
+            "translation-in-points" : [
+              -51.84284229290415,
+              1.1368683772161603e-13
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

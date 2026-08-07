@@ -2,6 +2,11 @@ import Cocoa
 import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
+  /// Kept alive for the window's lifetime; the channel stops working if this
+  /// is released.
+  private var contextMenuChannel: FlutterMethodChannel?
+  private var contextMenu: NativeContextMenu?
+
   override func awakeFromNib() {
     let args = Array(CommandLine.arguments.dropFirst())
 
@@ -46,6 +51,24 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    // A real AppKit context menu. Flutter's showMenu is a Material popup that
+    // never quite matches the system -- wrong metrics, no vibrancy, no
+    // keyboard behaviour. This hands the items to NSMenu instead.
+    let channel = FlutterMethodChannel(
+      name: "adb_files/context_menu",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    let menu = NativeContextMenu(view: flutterViewController.view)
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "show" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      menu.show(arguments: call.arguments, result: result)
+    }
+    self.contextMenuChannel = channel
+    self.contextMenu = menu
+
     super.awakeFromNib()
   }
 
@@ -54,5 +77,75 @@ class MainFlutterWindow: NSWindow {
       return nil
     }
     return Double(match.dropFirst(prefix.count))
+  }
+}
+
+/// Builds and pops up an NSMenu on behalf of Dart.
+///
+/// Items arrive as `{id, label, enabled}` maps, with a null entry meaning a
+/// separator. The reply is the chosen item's id, or nil if the user dismissed
+/// the menu.
+class NativeContextMenu: NSObject {
+  private let view: NSView
+  private var pending: FlutterResult?
+
+  init(view: NSView) {
+    self.view = view
+    super.init()
+  }
+
+  func show(arguments: Any?, result: @escaping FlutterResult) {
+    guard
+      let args = arguments as? [String: Any],
+      let rawItems = args["items"] as? [[String: Any]?],
+      let x = args["x"] as? Double,
+      let y = args["y"] as? Double
+    else {
+      result(FlutterError(code: "bad_args",
+                          message: "Expected items, x and y",
+                          details: nil))
+      return
+    }
+
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+
+    for raw in rawItems {
+      guard let raw = raw else {
+        menu.addItem(.separator())
+        continue
+      }
+      let item = NSMenuItem(
+        title: raw["label"] as? String ?? "",
+        action: #selector(itemSelected(_:)),
+        keyEquivalent: ""
+      )
+      item.target = self
+      item.isEnabled = raw["enabled"] as? Bool ?? true
+      item.representedObject = raw["id"]
+      menu.addItem(item)
+    }
+
+    pending = result
+
+    // Flutter reports the pointer in logical points from the view's top-left;
+    // AppKit's origin is bottom-left, hence the flip.
+    let point = NSPoint(x: x, y: view.bounds.height - y)
+    let shown = menu.popUp(positioning: nil, at: point, in: view)
+
+    // popUp is modal and returns once dismissed. If nothing was chosen the
+    // action never fired, so settle the reply here -- otherwise the Dart side
+    // waits forever.
+    if !shown || pending != nil {
+      let reply = pending
+      pending = nil
+      reply?(nil)
+    }
+  }
+
+  @objc private func itemSelected(_ sender: NSMenuItem) {
+    let reply = pending
+    pending = nil
+    reply?(sender.representedObject)
   }
 }

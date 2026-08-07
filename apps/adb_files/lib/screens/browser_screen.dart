@@ -9,11 +9,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/app_options.dart';
+import '../state/app_settings.dart';
 import '../state/connection_controller.dart';
 import '../state/tabs_controller.dart';
 import '../widgets/document_viewer.dart';
 import '../widgets/drag_drop.dart';
 import '../widgets/media_viewer.dart';
+import '../widgets/native_menu.dart';
+import 'settings_view.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/tab_bar.dart';
 import '../widgets/transfer_panel.dart';
@@ -21,11 +24,13 @@ import '../widgets/transfer_panel.dart';
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
     required this.connection,
+    required this.settings,
     this.initialPath,
     super.key,
   });
 
   final ConnectionController connection;
+  final AppSettings settings;
 
   /// Where the first tab opens. Set when this window was torn off a tab.
   final String? initialPath;
@@ -49,6 +54,9 @@ class _BrowserScreenState extends State<BrowserScreen> {
   /// Remote paths currently being fetched for an "open", so a second
   /// double-click does not start a duplicate download.
   final Set<String> _opening = {};
+
+  /// Bytes currently held in the preview cache, shown in Settings.
+  int? _cacheSize;
 
   /// Non-null while a recursive tree is being enumerated. Walking a big folder
   /// takes a noticeable moment before any transfer starts, and silence there
@@ -81,6 +89,18 @@ class _BrowserScreenState extends State<BrowserScreen> {
     )..addListener(_onTabsChanged);
     _tabs.loadActive();
     _refreshFreeSpace();
+    unawaited(_refreshCacheSize());
+  }
+
+  Future<void> _refreshCacheSize() async {
+    final size = await _opener.cacheSize();
+    if (mounted) setState(() => _cacheSize = size);
+  }
+
+  Future<void> _clearCache() async {
+    await _opener.clearCache();
+    await _refreshCacheSize();
+    if (mounted) _toast('Preview cache cleared');
   }
 
   @override
@@ -114,9 +134,16 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   void _closeTab() {
-    // Closing the last tab closes the window, matching Finder and browsers.
-    if (!_tabs.closeActive()) _closeWindow();
+    if (_tabs.closeActive()) return;
+    // The last tab. On desktop that means closing the window; on iOS there is
+    // no window to close and calling exit() is both wrong and grounds for App
+    // Store rejection, so leave the tab open.
+    if (_isDesktop) _closeWindow();
   }
+
+  /// True where the app manages its own windows and can talk to other apps.
+  static bool get _isDesktop =>
+      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
   void _closeWindow() {
     // No Flutter API for closing a desktop window; exiting is equivalent for
@@ -173,6 +200,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
         path: path,
         width: size.width,
         height: size.height,
+        // Skip adb discovery and device tracking in the child; this window
+        // already knows both answers.
+        adbPath: widget.connection.transport?.binaryPath,
+        serial: widget.connection.device?.serial,
       ),
     );
 
@@ -185,7 +216,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   String get _downloadsDir {
     final home = Platform.environment['HOME'];
-    return home == null ? Directory.systemTemp.path : '$home/Downloads';
+    if (home == null) return Directory.systemTemp.path;
+    // On iOS, HOME is the app container. ~/Downloads there would be invisible
+    // to the user; Documents is surfaced by UIFileSharingEnabled and shows up
+    // in the Files app.
+    return _isDesktop ? '$home/Downloads' : '$home/Documents';
   }
 
   /// Asks where to save, then queues the transfers.
@@ -290,6 +325,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _revealDownloads() async {
+    if (!FileOpener.canOpenExternally) return;
     await Process.run('open', [_downloadsDir]);
   }
 
@@ -333,6 +369,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
   /// file in another application, which needs a real path on disk.
   Future<void> _openExternally(AdbFileEntry entry) async {
     if (entry.isDirectory) return;
+    if (!FileOpener.canOpenExternally) {
+      _toast('Opening in another app is not supported on this platform.');
+      return;
+    }
     if (_opening.contains(entry.path)) return;
 
     final cached = _opener.isFresh(entry);
@@ -958,6 +998,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
               controller: _browser,
               deviceName: widget.connection.device?.displayName ?? 'Device',
               freeSpace: _freeSpace,
+              onOpenSettings: _tabs.openSettings,
             ),
             const VerticalDivider(width: 1),
             Expanded(
@@ -973,7 +1014,9 @@ class _BrowserScreenState extends State<BrowserScreen> {
                     },
                     onNewFolder: () => unawaited(_newFolder()),
                     onNewTab: _newTab,
-                    onRevealDownloads: () => unawaited(_revealDownloads()),
+                    onRevealDownloads: FileOpener.canOpenExternally
+                        ? () => unawaited(_revealDownloads())
+                        : null,
                     onDisconnect: widget.connection.disconnect,
                   ),
                   const Divider(height: 1),
@@ -983,7 +1026,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
                     onDetach: (i) => unawaited(_detachTab(i)),
                   ),
                   Expanded(
-                    child: _tabs.active.isPreview
+                    child: _tabs.active.isSettings
+                        ? SettingsView(
+                            settings: widget.settings,
+                            cacheSize: _cacheSize,
+                            onClearCache: _clearCache,
+                          )
+                        : _tabs.active.isPreview
                         ? PreviewView(
                             key: ValueKey('preview-${_tabs.active.id}'),
                             controller: _tabs.active.preview!,
@@ -1013,6 +1062,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
                             onOpenFile: (entry) => unawaited(_open(entry)),
                             onAction: (action, entries) =>
                                 unawaited(_runAction(action, entries)),
+                            // A real NSMenu on macOS; Material elsewhere.
+                            menuPresenter: NativeContextMenu.show,
                             rowWrapper: (context, entry, child) =>
                                 DraggableFileRow(
                                   entry: entry,
@@ -1058,7 +1109,7 @@ class _Toolbar extends StatelessWidget {
     required this.onRename,
     required this.onNewFolder,
     required this.onNewTab,
-    required this.onRevealDownloads,
+    this.onRevealDownloads,
     required this.onDisconnect,
   });
 
@@ -1069,7 +1120,9 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback onRename;
   final VoidCallback onNewFolder;
   final VoidCallback onNewTab;
-  final VoidCallback onRevealDownloads;
+
+  /// Null on platforms that cannot hand a folder to a file manager.
+  final VoidCallback? onRevealDownloads;
   final VoidCallback onDisconnect;
 
   @override
@@ -1136,11 +1189,12 @@ class _Toolbar extends StatelessWidget {
             onPressed: () => browser.setShowHidden(!browser.showHidden),
           ),
           const Spacer(),
-          TextButton.icon(
-            icon: const Icon(Icons.folder_open, size: 16),
-            label: const Text('Downloads'),
-            onPressed: onRevealDownloads,
-          ),
+          if (onRevealDownloads != null)
+            TextButton.icon(
+              icon: const Icon(Icons.folder_open, size: 16),
+              label: const Text('Downloads'),
+              onPressed: onRevealDownloads,
+            ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Disconnect',

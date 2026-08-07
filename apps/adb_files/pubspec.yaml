@@ -1,7 +1,9 @@
 name: adb_files
 description: A desktop file manager for Android devices.
 publish_to: none
-version: 0.1.0
+# The build number is a placeholder for local runs: tool/release.sh overrides
+# it with the git commit count, so released builds number themselves.
+version: 0.1.0+1
 resolution: workspace
 
 environment:
@@ -13,12 +15,12 @@ dependencies:
     git:
       url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_core
-      ref: v0.3.0
+      ref: v0.3.1
   adb_ui:
     git:
       url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_ui
-      ref: v0.3.0
+      ref: v0.3.1
   feature_files:
     path: ../../packages/feature_files
   feature_stats:
@@ -35,11 +37,17 @@ dependencies:
   media_kit_video: ^1.2.4
   media_kit_libs_video: ^1.0.4
   # PDFium-backed PDF rendering.
-  pdfrx: ^1.0.0
+  pdfrx: ^2.0.0
+  # Reads the running bundle's version, so the About box cannot disagree with
+  # what the installer actually put on disk.
+  package_info_plus: ^9.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Pure-Dart image processing for tool/apply_icon.dart, so regenerating app
+  # icons needs no ImageMagick or platform tooling.
+  image: ^4.2.0
   lints: ^5.0.0
 
 flutter:

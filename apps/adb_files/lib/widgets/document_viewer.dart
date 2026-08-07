@@ -18,10 +18,7 @@ class DevicePdfViewer extends StatelessWidget {
   Widget build(BuildContext context) {
     return PdfViewer.file(
       file.path,
-      params: const PdfViewerParams(
-        margin: 8,
-        maxScale: 8,
-      ),
+      params: const PdfViewerParams(margin: 8),
     );
   }
 }

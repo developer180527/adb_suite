@@ -19,16 +19,16 @@ The distinguishing decision: **there is no `Process.run('adb', …)` anywhere.**
 stdout that changes between Android versions.
 
 One app ships today: **`adb_files`**, a desktop file manager with tabs, drag and
-drop, trash, and in-place preview of media and documents. Two more feature
-packages (`feature_logcat`, `feature_stats`) are built and tested but not yet
-composed into their own app.
+drop, trash, in-place preview of media and documents, and connection over both
+USB and Wi-Fi. Two more feature packages (`feature_logcat`, `feature_stats`)
+are built and tested but not yet composed into their own app.
 
 | | |
 |---|---|
 | **Languages** | Dart / Flutter, plus Swift for macOS native bits |
 | **Targets** | macOS (primary), Windows, Linux, iOS/iPad (limited) |
-| **Code** | ~11,700 lines of library code, ~2,600 of tests |
-| **Tests** | **243 passing** — 57 + 16 + 65 + 40 + 32 + 33 |
+| **Code** | ~12,350 lines of library code, ~2,780 of tests |
+| **Tests** | **256 passing** — 57 + 16 + 65 + 40 + 32 + 46 |
 | **License** | MIT, holder "Venu Gopal" |
 
 ---
@@ -36,7 +36,7 @@ composed into their own app.
 ## Where everything lives
 
 ```
-~/Developer/
+<workspace>/            ← any parent directory; currently ~/Developer/abd_main
 ├── adb_dart/          ← PUBLIC repo: the protocol layer
 │   ├── packages/adb_core/     pure Dart ADB client, no Flutter
 │   └── packages/adb_ui/       shared Flutter widgets + formatters
@@ -48,10 +48,19 @@ composed into their own app.
     └── apps/adb_files/            the shipping desktop app
 ```
 
-Both must be checked out **as siblings** — see [Local setup](#local-setup).
+**What matters is that the two repos are siblings, not where that pair lives.**
+`pubspec_overrides.yaml` reaches the protocol layer as `../adb_dart/...`,
+relative to `adb_suite`. Moving the whole workspace is therefore safe; moving
+one repo out from beside the other is what breaks the build. Paths below are
+written relative to the workspace root for that reason — see
+[Local setup](#local-setup).
 
-> `~/Developer/adb` does **not** exist, despite some tooling defaulting its
-> working directory there. Work happens in the two directories above.
+> A third directory, `adb ` — note the **trailing space** — sits beside them.
+> It is an abandoned earlier single-package version of this project
+> (`lib/main.dart`, `lib/adb/`, `lib/features/`, last touched Dec 2025). It is
+> not part of the build and nothing depends on it. The trailing space is why
+> tooling that defaults its working directory to `.../adb` lands somewhere
+> unexpected instead of failing outright.
 
 ### Repo identity
 
@@ -73,7 +82,7 @@ dependency direction to stay honest.
 ```mermaid
 graph TD
     subgraph suite["adb_suite (private)"]
-        APP["apps/adb_files<br/>4,306 lines"]
+        APP["apps/adb_files<br/>4,940 lines"]
         FF["feature_files<br/>3,060 lines"]
         FL["feature_logcat<br/>983 lines"]
         FS["feature_stats<br/>820 lines"]
@@ -107,7 +116,7 @@ state, not an oversight.
 
 ### `adb_core` — the protocol client
 
-`~/Developer/adb_dart/packages/adb_core/lib/src/`
+`adb_dart/packages/adb_core/lib/src/`
 
 Two transports implement one `AdbTransport` interface:
 
@@ -144,13 +153,13 @@ hardware and are excluded from CI.
 
 ### `adb_ui` — shared Flutter bits
 
-`~/Developer/adb_dart/packages/adb_ui/lib/src/` — only two files:
+`adb_dart/packages/adb_ui/lib/src/` — only two files:
 `device_picker.dart` and `formatters.dart` (`formatBytes`, `formatPercent`).
 Deliberately thin; most UI belongs to a feature package.
 
 ### `feature_files` — the biggest feature
 
-`~/Developer/adb_suite/packages/feature_files/lib/src/`
+`adb_suite/packages/feature_files/lib/src/`
 
 ```
 file_service.dart             listing, delete, rename, mkdir, read/write text
@@ -179,7 +188,7 @@ battery models. Both fully tested; `feature_logcat` has no host app yet.
 
 ### `adb_files` — the shipping app
 
-`~/Developer/adb_suite/apps/adb_files/`
+`adb_suite/apps/adb_files/`
 
 ```
 lib/
@@ -187,15 +196,18 @@ lib/
   build_info.dart             which build is running (see Versioning)
   theme.dart                  neutral chrome, green accent from the icon
   screens/
-    connect_screen.dart       device selection
+    connect_screen.dart       device selection, plus the Wi-Fi connect/pair sheet
+    disconnected_screen.dart  the app skeleton shown with no device attached
     browser_screen.dart       the main window
     settings_view.dart        appearance, preview cache, About — opens in a tab
   state/
     connection_controller.dart
+    wireless_reply.dart       reads success out of adb's prose replies
     tabs_controller.dart      tabs incl. the settings tab
     app_settings.dart         persisted prefs (JSON, no plugin)
     app_options.dart          command-line args — used by tab tear-off
   widgets/
+    browser_toolbar.dart      shared by the live window and the skeleton
     sidebar.dart, tab_bar.dart, drag_drop.dart, transfer_panel.dart
     media_viewer.dart         real audio/video via media_kit/libmpv
     document_viewer.dart      PDF via pdfrx/PDFium
@@ -216,13 +228,53 @@ geometry args — see `app_options.dart` and the Swift file), native save panels
 and drag-and-drop to Finder using lazy virtual files so the download happens on
 drop.
 
+#### The window with no device
+
+`DisconnectedScreen` renders the full chrome — sidebar, toolbar, tab strip,
+status bar — inert, with the connect flow where the file list goes. A
+full-window takeover made the app read as not yet started, and swapping whole
+layouts meant the window rearranged itself whenever a cable was nudged.
+
+It is **not a mock**: it builds the same `Sidebar` and `BrowserToolbar` the live
+window builds, handed nulls instead of a session. Every control already derived
+its `onPressed` from state that is absent without a device, so nothing needed a
+parallel "disabled" flag — and a button added to the toolbar cannot appear in
+one window and not the other. `BrowserScreen` still requires a live session and
+was left alone; threading nullability through it and `TabsController` would have
+been a large refactor of working code for no visible gain.
+
+#### Connecting
+
+| Route | Transport | Where |
+|---|---|---|
+| USB | host server, auto-detected | everywhere with a local adb |
+| **Wi-Fi, paired** | host server: `host:pair` then `host:connect` | desktop |
+| Wi-Fi, direct | `DirectAdbConnection`, RSA handshake in-process | iOS/iPad |
+
+Desktop wireless deliberately goes through the **local adb server**, not the
+direct transport: the server already implements the Android 11+ pairing
+handshake, and a device connected that way flows through the existing
+`trackDevices()` machinery like any other. It needed no `adb_core` change at
+all, because `HostTransport.query()` is public — which is what kept this from
+turning into a protocol release and a tag bump (see the cross-repo gotchas).
+
+Android splits pairing and connecting across **two different ports**: pairing
+runs on a port that changes every time the pairing dialog is opened, connecting
+on a stable one. Conflating them is the usual reason wireless "does not work",
+so the dialog separates them and says so.
+
 ---
 
 ## Local setup
 
+Clone both into one parent directory. The parent's name and location do not
+matter; being siblings does. On this machine that parent is
+`~/Developer/abd_main`.
+
 ```bash
-git clone https://github.com/developer180527/adb_dart.git  ~/Developer/adb_dart
-git clone https://github.com/developer180527/adb_suite.git ~/Developer/adb_suite
+cd <workspace>
+git clone https://github.com/developer180527/adb_dart.git
+git clone https://github.com/developer180527/adb_suite.git
 ```
 
 `adb_suite/pubspec_overrides.yaml` (**gitignored**, already present on this
@@ -241,20 +293,21 @@ reproducible. **This split is the single biggest source of "works locally, fails
 in CI"** — see the gotchas below.
 
 ```bash
-cd ~/Developer/adb_suite/apps/adb_files
+cd adb_suite/apps/adb_files
 flutter pub get
 flutter run -d macos          # needs `adb` on PATH and a device with USB debugging
 ```
 
-Run everything:
+Run everything, from the workspace root. Each line is a subshell, so one
+failure does not leave you in the wrong directory for the next:
 
 ```bash
-cd ~/Developer/adb_dart/packages/adb_core && dart test        # 57
-cd ~/Developer/adb_dart/packages/adb_ui   && flutter test     # 16
-cd ~/Developer/adb_suite/packages/feature_files  && flutter test   # 65
-cd ~/Developer/adb_suite/packages/feature_logcat && flutter test   # 40
-cd ~/Developer/adb_suite/packages/feature_stats  && flutter test   # 32
-cd ~/Developer/adb_suite/apps/adb_files          && flutter test   # 33
+(cd adb_dart/packages/adb_core        && dart test)     # 57
+(cd adb_dart/packages/adb_ui          && flutter test)  # 16
+(cd adb_suite/packages/feature_files  && flutter test)  # 65
+(cd adb_suite/packages/feature_logcat && flutter test)  # 40
+(cd adb_suite/packages/feature_stats  && flutter test)  # 32
+(cd adb_suite/apps/adb_files          && flutter test)  # 46
 ```
 
 ---
@@ -280,7 +333,7 @@ dirty flag permanently true.
 **Settings → About** shows all of it with a Copy button for bug reports.
 
 ```bash
-cd ~/Developer/adb_suite/apps/adb_files
+cd adb_suite/apps/adb_files
 ./tool/release.sh              # host platform only
 ./tool/release.sh --no-sign
 ```
@@ -335,6 +388,16 @@ Institutional knowledge. Each of these was a live bug.
   solving in both repos. Bump the constraint in the same commit.
 - **CI needs `fetch-depth: 0`.** The build number is a commit count; the
   default shallow clone makes every build `1`.
+- **Prefer building on `adb_core`'s existing public API over extending it.**
+  Desktop wireless is `HostTransport.query('host:connect:…')` from the app.
+  Adding the method to `adb_core` instead would have meant a release, a tag, a
+  `ref:` bump in three pubspecs, and a window where local and CI disagree —
+  all for a string. Extend the protocol layer when the *protocol* needs it.
+- **Moving the workspace invalidates Xcode's cached paths.** `build/macos/
+  SourcePackages` stores absolute paths; after relocating the checkout the
+  build fails with "no XCFramework found" pointing at the old location.
+  `flutter clean` plus `rm -rf build/macos macos/Pods macos/Podfile.lock`
+  fixes it. Nothing is wrong with the code, which is what makes it confusing.
 
 ### Tests
 
@@ -369,6 +432,16 @@ Institutional knowledge. Each of these was a live bug.
   They are now recorded in `unsupported`.
 - **Cancel the reader before closing the stream.** A paused `StreamQueue` makes
   `await close()` deadlock.
+- **`host:connect` and `host:pair` answer `OKAY` when they fail.** The status
+  word only means the request was understood; the real outcome is English prose
+  in the body. Worse, the failure text ("failed to connect to X") *contains*
+  the success word, so a `contains` check reports every failure as a success and
+  the app claims to be connected to a phone that is asleep. Match on the
+  prefix — `wireless_reply.dart`, with the failure strings as tests.
+- **adb waits 75 seconds before giving up on an unreachable address** —
+  measured, not estimated. A mistyped IP is the likeliest cause and the user
+  needs telling while they still remember typing it, so the app imposes its own
+  20-second timeout and keeps Cancel enabled throughout.
 
 ### Platform
 
@@ -378,6 +451,9 @@ Institutional knowledge. Each of these was a live bug.
   args; needs `isRestorable = false`.
 - **`open -n <path> --args` silently drops the args** — use `open -a`. Flutter
   macOS also needs `dartEntrypointArguments` for argv to arrive.
+- **`Spacer` in `AlertDialog.actions` asserts at runtime.** Actions are laid
+  out in an `OverflowBar`, which is not a `Flex`, and `Spacer` requires one.
+  The analyzer sees nothing; the dialog explodes the first time it opens.
 - **`TextTheme.apply(fontSizeFactor:)` asserts non-null `fontSize`**, which
   Material 2021 typography violates — a full-screen red error, not a fallback.
   Set sizes explicitly.
@@ -393,13 +469,18 @@ Institutional knowledge. Each of these was a live bug.
 **Working and verified:** the whole `adb_files` app against a Galaxy A71
 (Android 13) — browsing, transfers both directions, multi-megabyte files, UTF-8
 paths, trash, preview of media and PDFs, tabs, tab tear-off, native context
-menus, theming, settings.
+menus, theming, settings. The disconnected skeleton and the Wi-Fi dialog are
+verified on macOS against a real adb server.
 
 **Known gaps:**
 
+- **Wireless has never completed a connection to a real device.** The failure,
+  timeout and pairing paths were exercised against a live adb server; the
+  success path has only unit tests, because no device was attached when it was
+  written. The first thing to try when hardware is available.
 - **iPad has never connected to a device.** Blocked by AP isolation on the
   router, not by code. The direct transport exists for this but is unproven
-  end to end.
+  end to end — and the same router behaviour would block desktop Wi-Fi too.
 - **Windows and Linux have never been built.** The `release.sh` branches for
   them are syntax-checked only; `cygpath`/`Compress-Archive` and the Linux apt
   list are unexercised.

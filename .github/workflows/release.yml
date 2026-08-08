@@ -32,15 +32,40 @@ env:
   FLUTTER_VERSION: 3.44.6
 
 jobs:
+  # Picks which platforms to build.
+  #
+  # This exists because neither `matrix` nor `secrets` is available in a
+  # job-level `if:` — the condition is evaluated before the matrix expands, so
+  # filtering there is a workflow parse error rather than a no-op. Emitting the
+  # matrix as JSON from a prior job is the way to make it conditional. The job
+  # runs on Linux and takes seconds, which is billed at the lowest rate.
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+          all='[{"os":"macos-latest","name":"macOS","artifact":"*.dmg"},
+                {"os":"ubuntu-latest","name":"Linux","artifact":"*.tar.gz"},
+                {"os":"windows-latest","name":"Windows","artifact":"*.zip"}]'
+          only='${{ inputs.only }}'
+          # Empty on a tag push, where every platform is required.
+          if [[ -z "$only" || "$only" == "all" ]]; then
+            picked=$(jq -c . <<<"$all")
+          else
+            picked=$(jq -c --arg n "$only" '[.[] | select(.name == $n)]' <<<"$all")
+          fi
+          echo "building: $picked"
+          echo "matrix=$picked" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: setup
     runs-on: ${{ matrix.os }}
-    # Evaluated per matrix entry. A tag push always builds all three — a
-    # release missing a platform is not a release.
-    if: >-
-      github.event_name != 'workflow_dispatch' ||
-      inputs.only == 'all' ||
-      inputs.only == matrix.name
     # This repo is private, so runner minutes are billed — and macOS bills at
     # ten times the Linux rate. A hung codesign prompt or a stuck build should
     # cost twenty minutes, not six hours.
@@ -57,16 +82,7 @@ jobs:
       # macOS and Windows artifacts.
       fail-fast: false
       matrix:
-        include:
-          - os: macos-latest
-            name: macOS
-            artifact: '*.dmg'
-          - os: ubuntu-latest
-            name: Linux
-            artifact: '*.tar.gz'
-          - os: windows-latest
-            name: Windows
-            artifact: '*.zip'
+        include: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
     steps:
       # Must run before flutter-action, so the SDK and pub both use it.

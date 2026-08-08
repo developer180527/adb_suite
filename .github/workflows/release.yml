@@ -33,6 +33,13 @@ jobs:
     # ten times the Linux rate. A hung codesign prompt or a stuck build should
     # cost twenty minutes, not six hours.
     timeout-minutes: 45
+    # Hoisted to the job so the signing steps can test whether a certificate
+    # was configured. Neither `secrets` nor a step's own `env:` is in scope in
+    # a step-level `if:` — only job-level `env` is — and `secrets` there is a
+    # hard workflow parse error, not a silent falsy.
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
     strategy:
       # Keep going: a Linux packaging failure should not deprive you of the
       # macOS and Windows artifacts.
@@ -116,14 +123,8 @@ jobs:
       # leaves `spctl -a` rejecting the app on any other machine, so users
       # still need right-click → Open. Only a paid "Developer ID Application"
       # certificate plus notarization removes that step.
-      # `secrets` is referenced directly in `if`: a step cannot see its own
-      # `env:` block from its condition, so testing env.MACOS_CERT_P12 here
-      # would silently always be empty and never sign.
       - name: Import signing certificate
-        if: matrix.os == 'macos-latest' && secrets.MACOS_CERT_P12 != ''
-        env:
-          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        if: matrix.os == 'macos-latest' && env.MACOS_CERT_P12 != ''
         run: |
           set -euo pipefail
           # A throwaway keychain, so nothing is left on the runner and the
@@ -152,10 +153,11 @@ jobs:
       - name: Build release
         shell: bash
         working-directory: apps/adb_files
-        env:
-          SIGNED: ${{ matrix.os == 'macos-latest' && secrets.MACOS_CERT_P12 != '' }}
         run: |
-          if [[ "${SIGNED:-false}" == "true" ]]; then
+          # Plain bash rather than another expression: the certificate either
+          # made it into the keychain or it did not, and $MACOS_CERT_P12 is the
+          # same signal the import step gated on.
+          if [[ "$(uname -s)" == "Darwin" && -n "${MACOS_CERT_P12:-}" ]]; then
             # release.sh prefers Developer ID over Apple Development itself.
             ./tool/release.sh
           else

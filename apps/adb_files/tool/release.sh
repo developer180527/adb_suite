@@ -138,6 +138,15 @@ release_linux() {
   mkdir -p "$stage"
   cp -R "$bundle/." "$stage/"
 
+  # Ship an icon. The per-size PNGs install.sh looks for under
+  # data/flutter_assets are not generated for Linux — nothing declares them as
+  # Flutter assets — so without this the .desktop entry resolves to no icon at
+  # all and the app shows up blank in the launcher.
+  local icon="Assets/Android-Finder-Icon-iOS-Default-1024x1024@1x.png"
+  if [[ -f $icon ]]; then
+    cp "$icon" "$stage/adb_files.png"
+  fi
+
   # A .desktop entry and an icon, so `install.sh` produces a real menu entry
   # rather than a loose binary in a folder.
   cat > "$stage/adb_files.desktop" <<'DESKTOP'
@@ -172,6 +181,13 @@ for size in 16 32 64 128 256 512; do
     cp "$src" "$dir/adb_files.png"
   fi
 done
+# share/pixmaps is the size-agnostic fallback every desktop still honours for
+# a .desktop `Icon=` lookup, which is what makes one 1024px source enough
+# without generating a whole hicolor tree.
+if [[ -f "$here/adb_files.png" ]]; then
+  mkdir -p "$prefix/share/pixmaps"
+  cp "$here/adb_files.png" "$prefix/share/pixmaps/adb_files.png"
+fi
 command -v update-desktop-database >/dev/null && \
   update-desktop-database "$prefix/share/applications" 2>/dev/null || true
 echo "Installed. Ensure $prefix/bin is on PATH."

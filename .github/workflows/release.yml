@@ -12,13 +12,27 @@ on:
 permissions:
   contents: write
 
+# A re-pushed tag or a quick second dispatch should not run two full matrices
+# at once. Tag runs are never cancelled — losing half a release matrix to a
+# newer run is worse than paying for both.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
+  # Pinned deliberately, and kept equal to the version releases are tested
+  # against locally. `channel: stable` alone would silently move under us
+  # between releases.
   FLUTTER_VERSION: 3.44.6
 
 jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # This repo is private, so runner minutes are billed — and macOS bills at
+    # ten times the Linux rate. A hung codesign prompt or a stuck build should
+    # cost twenty minutes, not six hours.
+    timeout-minutes: 45
     strategy:
       # Keep going: a Linux packaging failure should not deprive you of the
       # macOS and Windows artifacts.
@@ -58,6 +72,15 @@ jobs:
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libmpv-dev mpv libsecret-1-dev
 
+      # Cheap, and the first thing worth having when a platform that has never
+      # been built fails in an unfamiliar way.
+      - name: Environment
+        shell: bash
+        run: |
+          echo "host:    $(uname -s) $(uname -m)"
+          echo "runner:  $RUNNER_OS $RUNNER_ARCH"
+          flutter --version
+
       - run: flutter pub get
         working-directory: apps/adb_files
 
@@ -80,15 +103,69 @@ jobs:
             echo "::endgroup::"
           done
 
-      # No signing on macOS here. A free Apple ID only issues an "Apple
-      # Development" certificate, which Gatekeeper rejects on other machines,
-      # so signing with it in CI buys nothing. To sign properly, import a
-      # "Developer ID Application" certificate into a temporary keychain
-      # before this step and drop the --no-sign flag.
+      # Signing is optional and only affects macOS.
+      #
+      # Set MACOS_CERT_P12 (base64 of an exported .p12) and MACOS_CERT_PASSWORD
+      # to sign with a real certificate. With no secrets set, the build still
+      # signs — ad-hoc — because an unsigned binary will not launch at all on
+      # Apple Silicon. Ad-hoc is what makes the app *run*; it is not what makes
+      # Gatekeeper trust it.
+      #
+      # Read the honest version before wiring up secrets: a free Apple ID
+      # issues only an "Apple Development" certificate. Signing with it still
+      # leaves `spctl -a` rejecting the app on any other machine, so users
+      # still need right-click → Open. Only a paid "Developer ID Application"
+      # certificate plus notarization removes that step.
+      # `secrets` is referenced directly in `if`: a step cannot see its own
+      # `env:` block from its condition, so testing env.MACOS_CERT_P12 here
+      # would silently always be empty and never sign.
+      - name: Import signing certificate
+        if: matrix.os == 'macos-latest' && secrets.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # A throwaway keychain, so nothing is left on the runner and the
+          # login keychain is never touched.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          PASSWORD=$(uuidgen)
+          security create-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 900 "$KEYCHAIN"
+          security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
+
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          # Without this, codesign blocks on a GUI prompt that nobody can
+          # answer on a headless runner, and the job hangs until it times out.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$PASSWORD" "$KEYCHAIN" >/dev/null
+
+          # Put it first so release.sh's `security find-identity` sees it.
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
       - name: Build release
         shell: bash
         working-directory: apps/adb_files
-        run: ./tool/release.sh --no-sign
+        env:
+          SIGNED: ${{ matrix.os == 'macos-latest' && secrets.MACOS_CERT_P12 != '' }}
+        run: |
+          if [[ "${SIGNED:-false}" == "true" ]]; then
+            # release.sh prefers Developer ID over Apple Development itself.
+            ./tool/release.sh
+          else
+            # --no-sign does not mean unsigned: Xcode ad-hoc signs during the
+            # build (verified — `codesign -dv` reports flags=0x2(adhoc)), which
+            # is what lets the app launch on Apple Silicon at all. Skipping
+            # release.sh's own codesign pass only skips a signature that would
+            # not have satisfied Gatekeeper anyway.
+            ./tool/release.sh --no-sign
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -116,8 +193,9 @@ jobs:
             ### Installing
 
             **macOS** — open the `.dmg` and drag the app to Applications.
-            The build is unsigned, so the first launch needs
-            right-click → Open (Gatekeeper blocks a double-click), or:
+            Universal: runs on both Apple Silicon and Intel.
+            The build is not notarized, so the first launch needs
+            right-click → Open (a double-click is blocked), or:
             `xattr -dr com.apple.quarantine /Applications/adb_files.app`
 
             **Windows** — unzip and run `adb_files.exe`. SmartScreen will warn

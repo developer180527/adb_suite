@@ -6,6 +6,12 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Build a single platform (macOS bills at 10x, so iterate narrowly)'
+        type: choice
+        default: all
+        options: [all, macOS, Linux, Windows]
   push:
     tags: ['v*']
 
@@ -29,6 +35,12 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Evaluated per matrix entry. A tag push always builds all three — a
+    # release missing a platform is not a release.
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.only == 'all' ||
+      inputs.only == matrix.name
     # This repo is private, so runner minutes are billed — and macOS bills at
     # ten times the Linux rate. A hung codesign prompt or a stuck build should
     # cost twenty minutes, not six hours.
@@ -57,6 +69,24 @@ jobs:
             artifact: '*.zip'
 
     steps:
+      # Must run before flutter-action, so the SDK and pub both use it.
+      #
+      # super_native_extensions builds through cargokit, whose
+      # resolve_symlinks.ps1 walks a path one component at a time calling
+      # `Get-Item`. `Get-Item` cannot see hidden directories without -Force,
+      # and `C:\Users\runneradmin\AppData` is hidden — so resolving Flutter's
+      # .plugin_symlinks entry, which points into the pub cache under
+      # AppData\Local\Pub\Cache, fails with ItemNotFound and the build hangs
+      # rather than failing cleanly.
+      #
+      # Relocating the cache to a visible root avoids the hidden directory
+      # entirely. The short path also buys headroom against MAX_PATH, which
+      # cargokit's deep Rust build directories otherwise flirt with.
+      - name: Move the pub cache off AppData (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "PUB_CACHE=D:\\pubcache" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           # Required: the build number is `git rev-list --count HEAD`, which

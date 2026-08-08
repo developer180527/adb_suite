@@ -26,4 +26,4 @@ dependency_overrides:
     git:
       url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_core
-      ref: v0.3.1
+      ref: v0.3.2

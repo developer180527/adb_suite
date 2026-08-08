@@ -5,6 +5,8 @@ import 'package:adb_core/adb_core.dart';
 import 'package:feature_files/feature_files.dart';
 import 'package:flutter/foundation.dart';
 
+import 'wireless_reply.dart';
+
 /// Where the app is in the connect flow.
 ///
 /// Each of these needs a different message and a different suggested action.
@@ -201,6 +203,112 @@ class ConnectionController extends ChangeNotifier {
       _error = e;
       _set(ConnectionPhase.failed);
     }
+  }
+
+  // --- wireless via the local adb server (the desktop path) ---
+
+  /// True when wireless pairing and connecting are available here.
+  ///
+  /// Desktop goes through the local adb server, which handles the Android 11+
+  /// pairing handshake for us. iOS has no server and uses [connectDirect]
+  /// instead, which cannot pair.
+  bool get supportsWirelessPairing => supportsLocalServer && _transport != null;
+
+  /// Pairs with a device showing Developer options → Wireless debugging →
+  /// "Pair device with pairing code".
+  ///
+  /// Pairing is a one-time trust exchange on its *own* port, which Android
+  /// shows alongside the code and which is not the port used to connect
+  /// afterwards. Returns the daemon's message on success.
+  ///
+  /// Deliberately does not touch [phase]: pairing is a side operation that
+  /// leaves the connection state exactly as it found it, so a failed pair does
+  /// not knock the app out of whatever it was showing.
+  Future<String> pairWireless({
+    required String host,
+    required int port,
+    required String code,
+  }) async {
+    final transport = _transport;
+    if (transport == null) {
+      throw StateError('adb is not running, so pairing is not possible.');
+    }
+    final reply = await transport.query('host:pair:$code:$host:$port');
+    // As with connect, the daemon answers OKAY and puts the real outcome in
+    // the body.
+    if (!wirelessReplyIsSuccess(reply, 'paired')) {
+      throw AdbFailure(reply.isEmpty ? 'Pairing failed.' : reply);
+    }
+    return reply;
+  }
+
+  /// Connects to a device over Wi-Fi through the local adb server.
+  ///
+  /// Requires either `adb tcpip 5555` over USB once, or an Android 11+ device
+  /// that has been paired via [pairWireless].
+  /// How long to wait before giving up on `host:connect`.
+  ///
+  /// adb's own timeout for an address that nothing answers at is 75 seconds,
+  /// measured. That is far too long to sit in front of: a mistyped address is
+  /// the single most likely cause, and the user needs to be told so while they
+  /// still remember typing it. Twenty seconds is comfortably longer than a
+  /// real handshake on a slow network and short enough to stay a conversation.
+  static const wirelessConnectTimeout = Duration(seconds: 20);
+
+  Future<void> connectWireless({required String host, int port = 5555}) async {
+    final transport = _transport;
+    if (transport == null) {
+      _error = 'adb is not running, so a wireless connection is not possible.';
+      _set(ConnectionPhase.failed);
+      return;
+    }
+
+    _set(ConnectionPhase.connecting);
+    try {
+      // The abandoned request keeps its socket until adb answers; that is a
+      // few idle bytes on the loopback interface and it cleans itself up.
+      // Holding the UI for another 55 seconds to avoid it is a bad trade.
+      final reply = await transport
+          .query('host:connect:$host:$port')
+          .timeout(wirelessConnectTimeout);
+
+      // `host:connect` answers OKAY even when it could not reach the device —
+      // the status word only says the *request* was understood. Treating OKAY
+      // as success here would leave the app claiming to be connected to a
+      // phone that is asleep or on another network.
+      if (!wirelessReplyIsSuccess(reply, 'connected')) {
+        _error = reply.isEmpty
+            ? 'Could not connect to $host:$port.'
+            : reply.trim();
+        _set(ConnectionPhase.failed);
+        return;
+      }
+
+      // Attach straight to the serial rather than waiting for track-devices to
+      // notice it. The push does arrive, but waiting on it means sitting on
+      // "Connecting…" indefinitely whenever it does not.
+      await connect(
+        AdbDevice(serial: '$host:$port', state: AdbDeviceState.device),
+      );
+    } on TimeoutException {
+      // Say what to check. "Timed out" alone sends people to restart adb,
+      // which is almost never the problem.
+      _error =
+          'No answer from $host:$port after '
+          '${wirelessConnectTimeout.inSeconds} seconds.\n\n'
+          'Check the address against Developer options → Wireless debugging, '
+          'that the device is awake and on this network, and that the router '
+          'is not isolating clients from each other.';
+      _set(ConnectionPhase.failed);
+    } on Object catch (e) {
+      _error = e;
+      _set(ConnectionPhase.failed);
+    }
+  }
+
+  /// Drops a wireless device, leaving USB devices alone.
+  Future<void> disconnectWireless(String serial) async {
+    await _transport?.query('host:disconnect:$serial');
   }
 
   // --- direct wireless (the iPad path) ---

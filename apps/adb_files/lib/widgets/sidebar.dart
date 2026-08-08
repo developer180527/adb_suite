@@ -27,14 +27,17 @@ class Shortcut {
 
 class Sidebar extends StatelessWidget {
   const Sidebar({
-    required this.controller,
+    this.controller,
     required this.deviceName,
     this.freeSpace,
     this.onOpenSettings,
     super.key,
   });
 
-  final FileBrowserController controller;
+  /// Null while no device is connected. The shortcuts still render, greyed
+  /// out, so the disconnected window keeps its shape instead of collapsing to
+  /// a bare panel.
+  final FileBrowserController? controller;
   final String deviceName;
   final ({int available, int total})? freeSpace;
 
@@ -44,6 +47,7 @@ class Sidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final controller = this.controller;
 
     return Container(
       width: 208,
@@ -55,7 +59,15 @@ class Sidebar extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
             child: Row(
               children: [
-                Icon(Icons.smartphone, size: 18, color: theme.colorScheme.primary),
+                Icon(
+                  controller == null
+                      ? Icons.smartphone_outlined
+                      : Icons.smartphone,
+                  size: 18,
+                  color: controller == null
+                      ? theme.disabledColor
+                      : theme.colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -78,7 +90,9 @@ class Sidebar extends StatelessWidget {
                     // into DCIM/Camera/Foo still shows Camera as active
                     // rather than nothing.
                     selected: _activeShortcut?.path == shortcut.path,
-                    onTap: () => controller.navigateTo(shortcut.path),
+                    onTap: controller == null
+                        ? null
+                        : () => controller.navigateTo(shortcut.path),
                   ),
               ],
             ),
@@ -101,6 +115,8 @@ class Sidebar extends StatelessWidget {
   }
 
   Shortcut? get _activeShortcut {
+    final controller = this.controller;
+    if (controller == null) return null;
     Shortcut? best;
     for (final shortcut in Shortcut.all) {
       if (!RemotePath.isWithin(shortcut.path, controller.path)) continue;
@@ -121,11 +137,16 @@ class _SidebarItem extends StatelessWidget {
 
   final Shortcut shortcut;
   final bool selected;
-  final VoidCallback onTap;
+
+  /// Null disables the row — used by the disconnected skeleton.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final disabled = onTap == null;
+    final foreground = disabled ? theme.disabledColor : null;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1),
       child: Material(
@@ -138,12 +159,14 @@ class _SidebarItem extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             child: Row(
               children: [
-                Icon(shortcut.icon, size: 16),
+                Icon(shortcut.icon, size: 16, color: foreground),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     shortcut.label,
-                    style: theme.textTheme.bodyMedium,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: foreground,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),

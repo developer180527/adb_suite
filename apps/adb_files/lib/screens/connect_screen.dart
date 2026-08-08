@@ -14,9 +14,21 @@ class ConnectScreen extends StatelessWidget {
   final ConnectionController controller;
 
   @override
+  Widget build(BuildContext context) =>
+      Scaffold(body: ConnectPanel(controller: controller));
+}
+
+/// The connect flow with no window chrome of its own, so it can sit inside the
+/// disconnected skeleton's content area as well as fill a bare screen.
+class ConnectPanel extends StatelessWidget {
+  const ConnectPanel({required this.controller, super.key});
+
+  final ConnectionController controller;
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
+    return Center(
+      child: SingleChildScrollView(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
           child: Padding(
@@ -48,6 +60,9 @@ class ConnectScreen extends StatelessWidget {
           'If it is plugged in but not showing, check the cable — many USB '
           'cables carry power only and no data.',
       action: ('Retry', controller.retry),
+      secondary: controller.supportsWirelessPairing
+          ? ('Connect over Wi-Fi…', () => showWirelessDialog(context, controller))
+          : null,
     ),
     ConnectionPhase.unauthorized => _Status(
       icon: Icons.lock_outline,
@@ -72,6 +87,9 @@ class ConnectScreen extends StatelessWidget {
       title: 'Something went wrong',
       detail: '${controller.error}',
       action: ('Retry', controller.retry),
+      secondary: controller.supportsWirelessPairing
+          ? ('Connect over Wi-Fi…', () => showWirelessDialog(context, controller))
+          : null,
     ),
     ConnectionPhase.connected => const SizedBox.shrink(),
   };
@@ -273,6 +291,286 @@ class _AddressEntryState extends State<_AddressEntry> {
   }
 }
 
+/// Opens the Wi-Fi connect/pair sheet.
+Future<void> showWirelessDialog(
+  BuildContext context,
+  ConnectionController controller,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => WirelessDialog(controller: controller),
+);
+
+/// Connect-over-Wi-Fi for desktop, where a local adb server exists.
+///
+/// Two steps, because Android splits them: pairing is a one-time trust
+/// exchange on a port that changes every time the pairing dialog is opened,
+/// and connecting uses a *different*, stable port. Conflating them is the
+/// single most common reason wireless debugging appears not to work, so they
+/// are separate panels here with the port difference spelled out.
+///
+/// Devices set up the old way (`adb tcpip 5555` over USB) skip pairing
+/// entirely, which is why Connect is the default panel.
+class WirelessDialog extends StatefulWidget {
+  const WirelessDialog({required this.controller, super.key});
+
+  final ConnectionController controller;
+
+  @override
+  State<WirelessDialog> createState() => _WirelessDialogState();
+}
+
+class _WirelessDialogState extends State<WirelessDialog> {
+  final _host = TextEditingController();
+  final _port = TextEditingController(text: '5555');
+  final _pairHost = TextEditingController();
+  final _pairPort = TextEditingController();
+  final _code = TextEditingController();
+
+  bool _pairing = false;
+  bool _busy = false;
+  String? _message;
+  bool _failed = false;
+
+  @override
+  void dispose() {
+    _host.dispose();
+    _port.dispose();
+    _pairHost.dispose();
+    _pairPort.dispose();
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    final host = _host.text.trim();
+    if (host.isEmpty || _busy) return;
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+
+    await widget.controller.connectWireless(
+      host: host,
+      port: int.tryParse(_port.text.trim()) ?? 5555,
+    );
+
+    if (!mounted) return;
+    // The controller owns the outcome: it has either moved to `connected` or
+    // recorded why not. Reading it back keeps one source of truth rather than
+    // duplicating the success rules here.
+    if (widget.controller.phase == ConnectionPhase.connected) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _failed = true;
+      _message = '${widget.controller.error}';
+    });
+  }
+
+  Future<void> _pair() async {
+    final host = _pairHost.text.trim();
+    final port = int.tryParse(_pairPort.text.trim());
+    final code = _code.text.trim();
+    if (host.isEmpty || port == null || code.isEmpty || _busy) return;
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+
+    try {
+      final reply = await widget.controller.pairWireless(
+        host: host,
+        port: port,
+        code: code,
+      );
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _failed = false;
+        _message = reply.trim();
+        // Pairing tells us the device's address; carry it over so the user
+        // does not retype it, but not the port — the connect port is not the
+        // pairing port.
+        if (_host.text.trim().isEmpty) _host.text = host;
+        _pairing = false;
+      });
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _failed = true;
+        _message = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return AlertDialog(
+      title: Text(_pairing ? 'Pair a device' : 'Connect over Wi-Fi'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              _pairing
+                  ? 'On the device: Developer options → Wireless debugging → '
+                        '"Pair device with pairing code". Use the address, port '
+                        'and code from that dialog — its port is only for '
+                        'pairing and changes each time.'
+                  : 'On the device: Developer options → Wireless debugging. '
+                        'Use the address and port shown on that screen (not the '
+                        'pairing dialog). Devices set up with "adb tcpip 5555" '
+                        'use port 5555.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            if (_pairing) ...[
+              _AddressRow(
+                host: _pairHost,
+                port: _pairPort,
+                portLabel: 'Pairing port',
+                portHint: '37115',
+                onSubmit: _pair,
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _code,
+                autocorrect: false,
+                decoration: const InputDecoration(
+                  labelText: 'Pairing code',
+                  hintText: '123456',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onSubmitted: (_) => _pair(),
+              ),
+            ] else
+              _AddressRow(
+                host: _host,
+                port: _port,
+                portLabel: 'Port',
+                portHint: '5555',
+                autofocus: true,
+                onSubmit: _connect,
+              ),
+            if (_message != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _message!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: _failed
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.primary,
+                ),
+              ),
+            ],
+            if (_busy) ...[
+              const SizedBox(height: 16),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
+          ],
+        ),
+      ),
+      // No Spacer here: AlertDialog lays its actions out in an OverflowBar,
+      // which is not a Flex, so a Spacer asserts as soon as the dialog opens.
+      actions: [
+        TextButton(
+          onPressed: _busy
+              ? null
+              : () => setState(() {
+                  _pairing = !_pairing;
+                  _message = null;
+                }),
+          child: Text(_pairing ? 'Back' : 'Pair a new device…'),
+        ),
+        // Stays enabled while busy on purpose. A connection attempt can run
+        // for the full timeout, and trapping the user in a dialog they cannot
+        // dismiss for that long is worse than letting them leave: the attempt
+        // finishes on the controller regardless, and a device that does answer
+        // still lands them in the browser.
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : (_pairing ? _pair : _connect),
+          child: Text(_pairing ? 'Pair' : 'Connect'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AddressRow extends StatelessWidget {
+  const _AddressRow({
+    required this.host,
+    required this.port,
+    required this.portLabel,
+    required this.portHint,
+    required this.onSubmit,
+    this.autofocus = false,
+  });
+
+  final TextEditingController host;
+  final TextEditingController port;
+  final String portLabel;
+  final String portHint;
+  final VoidCallback onSubmit;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          flex: 3,
+          child: TextField(
+            controller: host,
+            autofocus: autofocus,
+            autocorrect: false,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              labelText: 'IP address',
+              hintText: '192.168.1.104',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            onSubmitted: (_) => onSubmit(),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // Wide enough for "Pairing port" to render in full; at a narrower
+        // flex the label truncates to "Pairing …", which hides the one word
+        // that distinguishes this field from the connect port.
+        Expanded(
+          flex: 2,
+          child: TextField(
+            controller: port,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: portLabel,
+              hintText: portHint,
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onSubmitted: (_) => onSubmit(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _DevicePicker extends StatelessWidget {
   const _DevicePicker({required this.controller});
 
@@ -311,6 +609,14 @@ class _DevicePicker extends StatelessWidget {
                   : null,
             ),
           ),
+        if (controller.supportsWirelessPairing) ...[
+          const SizedBox(height: 8),
+          TextButton.icon(
+            icon: const Icon(Icons.wifi, size: 16),
+            label: const Text('Connect over Wi-Fi…'),
+            onPressed: () => showWirelessDialog(context, controller),
+          ),
+        ],
       ],
     );
   }

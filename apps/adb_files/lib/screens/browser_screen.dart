@@ -12,6 +12,7 @@ import '../state/app_options.dart';
 import '../state/app_settings.dart';
 import '../state/connection_controller.dart';
 import '../state/tabs_controller.dart';
+import '../widgets/browser_toolbar.dart';
 import '../widgets/document_viewer.dart';
 import '../widgets/drag_drop.dart';
 import '../widgets/media_viewer.dart';
@@ -1004,7 +1005,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
             Expanded(
               child: Column(
                 children: [
-                  _Toolbar(
+                  BrowserToolbar(
                     browser: _browser,
                     selected: selection,
                     onDownload: () => unawaited(_download(selection)),
@@ -1095,112 +1096,6 @@ class _BrowserScreenState extends State<BrowserScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _Toolbar extends StatelessWidget {
-  const _Toolbar({
-    required this.browser,
-    required this.selected,
-    required this.onDownload,
-    required this.onDelete,
-    required this.onRename,
-    required this.onNewFolder,
-    required this.onNewTab,
-    this.onRevealDownloads,
-    required this.onDisconnect,
-  });
-
-  final FileBrowserController browser;
-  final List<AdbFileEntry> selected;
-  final VoidCallback onDownload;
-  final VoidCallback onDelete;
-  final VoidCallback onRename;
-  final VoidCallback onNewFolder;
-  final VoidCallback onNewTab;
-
-  /// Null on platforms that cannot hand a folder to a file manager.
-  final VoidCallback? onRevealDownloads;
-  final VoidCallback onDisconnect;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasSelection = selected.isNotEmpty;
-    final one = selected.length == 1;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            tooltip: 'Back',
-            onPressed: browser.canGoBack ? browser.goBack : null,
-          ),
-          IconButton(
-            icon: const Icon(Icons.arrow_forward),
-            tooltip: 'Forward',
-            onPressed: browser.canGoForward ? browser.goForward : null,
-          ),
-          IconButton(
-            icon: const Icon(Icons.arrow_upward),
-            tooltip: 'Up  ⌘↑',
-            onPressed: browser.canGoUp ? browser.goUp : null,
-          ),
-          const SizedBox(width: 12),
-          IconButton(
-            icon: const Icon(Icons.download),
-            tooltip: 'Download…  ⌘D',
-            onPressed: hasSelection ? onDownload : null,
-          ),
-          IconButton(
-            icon: const Icon(Icons.drive_file_rename_outline),
-            tooltip: 'Rename',
-            onPressed: one ? onRename : null,
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Move to Trash  (hold Shift to delete permanently)',
-            onPressed: hasSelection ? onDelete : null,
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.create_new_folder_outlined),
-            tooltip: 'New folder',
-            onPressed: onNewFolder,
-          ),
-          IconButton(
-            icon: const Icon(Icons.tab),
-            tooltip: 'New tab  ⌘T',
-            onPressed: onNewTab,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh  ⌘R',
-            onPressed: browser.refresh,
-          ),
-          IconButton(
-            icon: Icon(
-              browser.showHidden ? Icons.visibility : Icons.visibility_off,
-            ),
-            tooltip: browser.showHidden ? 'Hide hidden files' : 'Show hidden files',
-            onPressed: () => browser.setShowHidden(!browser.showHidden),
-          ),
-          const Spacer(),
-          if (onRevealDownloads != null)
-            TextButton.icon(
-              icon: const Icon(Icons.folder_open, size: 16),
-              label: const Text('Downloads'),
-              onPressed: onRevealDownloads,
-            ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Disconnect',
-            onPressed: onDisconnect,
-          ),
-        ],
       ),
     );
   }

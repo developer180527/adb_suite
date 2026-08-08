@@ -4,7 +4,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'screens/browser_screen.dart';
 import 'theme.dart';
-import 'screens/connect_screen.dart';
+import 'screens/disconnected_screen.dart';
 import 'state/app_options.dart';
 import 'state/app_settings.dart';
 import 'state/connection_controller.dart';
@@ -78,7 +78,7 @@ class _AdbFilesAppState extends State<AdbFilesApp> {
               settings: widget.settings,
             );
           }
-          return ConnectScreen(controller: _connection);
+          return DisconnectedScreen(controller: _connection);
         },
       ),
     );

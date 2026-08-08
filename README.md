@@ -2,7 +2,7 @@
 
 Product repo: feature packages and the consumer apps built on them.
 
-The protocol layer lives in the public [`adb_dart`](https://github.com/venugopal/adb_dart)
+The protocol layer lives in the public [`adb_dart`](https://github.com/developer180527/adb_dart)
 repo (`adb_core`, `adb_ui`). Dependencies point one way only — product depends
 on protocol, never the reverse.
 
@@ -18,12 +18,15 @@ app hosts it. Adding or splitting an app is a pubspec change, not a refactor.
 
 ## Local setup
 
-Check out both repos as siblings:
+Check out both repos as siblings, under any parent directory:
 
 ```
-~/Developer/adb_dart
-~/Developer/adb_suite
+<workspace>/adb_dart
+<workspace>/adb_suite
 ```
+
+The override below resolves `../adb_dart`, so the pair can live anywhere as
+long as they stay beside each other.
 
 Then create `pubspec_overrides.yaml` at this repo's root (it is gitignored):
 

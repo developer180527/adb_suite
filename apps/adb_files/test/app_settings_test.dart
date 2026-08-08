@@ -17,7 +17,18 @@ void main() {
     dir = Directory.systemTemp.createTempSync('settings_test');
     file = File('${dir.path}/settings.json');
   });
-  tearDown(() => dir.deleteSync(recursive: true));
+  // Best-effort: `serialises rapid unawaited saves` deliberately leaves writes
+  // in flight, and Windows refuses to delete a directory holding an open file
+  // where POSIX allows it. A hard delete here would pass on macOS and Linux
+  // and fail only on Windows CI. The temp directory is the OS's to reclaim;
+  // failing to remove it must not fail the test.
+  tearDown(() {
+    try {
+      dir.deleteSync(recursive: true);
+    } on FileSystemException {
+      // A write was still open. Harmless.
+    }
+  });
 
   test('serialises rapid unawaited saves into valid JSON', () async {
     final settings = await AppSettings.load(file: file);

@@ -7,14 +7,14 @@ packages:
       path: "../adb_dart/packages/adb_core"
       relative: true
     source: path
-    version: "0.3.2"
+    version: "0.4.0"
   adb_ui:
     dependency: "direct overridden"
     description:
       path: "../adb_dart/packages/adb_ui"
       relative: true
     source: path
-    version: "0.3.2"
+    version: "0.4.0"
   archive:
     dependency: transitive
     description:

@@ -225,11 +225,21 @@ class _AddressEntryState extends State<_AddressEntry> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Enter the IP address shown in Developer options → Wireless '
-          'debugging, or the address of a device you enabled with '
-          '"adb tcpip 5555".',
+          'First, connect the phone to a computer over USB once and run '
+          '"adb tcpip 5555". USB debugging on its own is not enough — adbd '
+          'only listens on USB until that command switches it to TCP.',
           textAlign: TextAlign.center,
           style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Do not use the port from Developer options → Wireless debugging. '
+          'Android 11+ encrypts that one and requires pairing through a '
+          'desktop adb server, which iOS cannot run.',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+          ),
         ),
         const SizedBox(height: 24),
         Row(

@@ -364,8 +364,16 @@ class ConnectionController extends ChangeNotifier {
 
   /// Connects straight to a device's adbd over TCP, with no adb server.
   ///
-  /// Requires `adb tcpip 5555` to have been run once over USB, or Wireless
-  /// debugging enabled on Android 11+.
+  /// **Requires `adb tcpip 5555`, run once over USB from a computer.** Enabling
+  /// USB debugging alone is not enough: adbd listens on USB only until that
+  /// command switches it to TCP.
+  ///
+  /// It specifically does **not** work with the Android 11+ "Wireless
+  /// debugging" screen. That mode speaks TLS and requires a SPAKE2 pairing
+  /// exchange; this transport speaks the legacy plaintext protocol, so the port
+  /// shown on that screen will always refuse it. Pairing needs a real adb
+  /// server, which iOS cannot run — which is the whole reason this transport
+  /// exists.
   Future<void> connectDirect(String host, {int port = 5555}) async {
     _set(ConnectionPhase.connecting);
 
@@ -399,8 +407,7 @@ class ConnectionController extends ChangeNotifier {
           _set(ConnectionPhase.awaitingDeviceAuthorization);
 
         case DirectConnectResult.rejected:
-          _error = 'The device refused the connection. Check that '
-              '"adb tcpip 5555" was run and the address is right.';
+          _error = _rejectedAdvice(port);
           _set(ConnectionPhase.failed);
       }
     } on SocketException catch (e) {
@@ -408,10 +415,42 @@ class ConnectionController extends ChangeNotifier {
       // wrong address, phone asleep, or the router isolating clients.
       _error = 'Could not reach $host:$port — ${e.osError?.message ?? e.message}';
       _set(ConnectionPhase.failed);
+    } on AdbProtocolError {
+      // Something answered, but not in ADB. Overwhelmingly this is the
+      // Android 11+ Wireless debugging port, which is TLS.
+      _error = _rejectedAdvice(port);
+      _set(ConnectionPhase.failed);
     } on Object catch (e) {
       _error = e;
       _set(ConnectionPhase.failed);
     }
+  }
+
+  /// What to tell the user when the device answered but would not speak ADB.
+  ///
+  /// The port is the tell. 5555 means the legacy listener genuinely is not
+  /// running; anything else is almost certainly the Wireless debugging port,
+  /// which is a different, encrypted protocol — and saying "connection
+  /// refused" there sends people to check their Wi-Fi instead of the one thing
+  /// that would fix it.
+  static String _rejectedAdvice(int port) {
+    if (port != 5555) {
+      return 'Nothing on port $port is speaking the ADB protocol.\n\n'
+          'If you took this port from Developer options → Wireless debugging, '
+          'that will not work here: Android 11+ encrypts that connection and '
+          'requires pairing through a desktop adb server, which iOS cannot '
+          'run.\n\n'
+          'Instead, connect the phone to a computer over USB once and run:\n'
+          '    adb tcpip 5555\n\n'
+          'Then come back and connect to port 5555. It stays enabled until the '
+          'phone reboots.';
+    }
+    return 'The device refused the connection.\n\n'
+        'USB debugging on its own is not enough — adbd only listens on USB '
+        'until you switch it to TCP. Connect the phone to a computer over USB '
+        'once and run:\n'
+        '    adb tcpip 5555\n\n'
+        'It stays enabled until the phone reboots.';
   }
 
   static String? _modelFromBanner(String banner) {

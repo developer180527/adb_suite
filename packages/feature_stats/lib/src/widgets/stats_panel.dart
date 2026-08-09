@@ -144,7 +144,11 @@ class _MemoryCard extends StatelessWidget {
         children: [
           LinearProgressIndicator(value: memory.usedFraction, minHeight: 8),
           const SizedBox(height: 10),
-          Row(
+          // Wrap, not Row: this panel is shown in a ~270px rail as well as a
+          // wide window, and a fixed row of tiles overflows the narrow case.
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
             children: [
               // "Available" is the honest pressure signal; "free" looks
               // alarmingly low on Android because the page cache uses it.
@@ -187,7 +191,9 @@ class _BatteryCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 10,
         children: [
           _Tile(
             label: 'Temperature',
@@ -221,11 +227,29 @@ class _Card extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // The trailing summary is the widest thing in the card — "4.66 GB
+            // / 7.45 GB" at titleMedium does not fit beside a title in a
+            // ~270px rail. Rather than pick a font size that happens to work
+            // at one width, the title ellipsizes and the summary scales down
+            // only as far as it must.
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(title, style: Theme.of(context).textTheme.titleSmall),
-                if (trailing != null) trailing!,
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                if (trailing != null)
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: trailing!,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 10),
@@ -242,16 +266,31 @@ class _Tile extends StatelessWidget {
     required this.label,
     required this.value,
     this.highlight = false,
+    this.width = 104,
   });
 
   final String label;
   final String value;
   final bool highlight;
 
+  /// Definite width so the tile can sit in a [Wrap], which has no flex.
+  final double width;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Expanded(
+    // Deliberately *not* wrapped in Expanded.
+    //
+    // It used to be, which made the tile unusable anywhere except directly
+    // inside a Row: the panel's own scrolling Column also renders a tile for
+    // uptime, and a flexed child under an unbounded height throws
+    // "RenderFlex children have non-zero flex but incoming height constraints
+    // are unbounded" — taking the whole panel down, blank, with no visible
+    // clue as to which of its widgets was at fault.
+    //
+    // Flex belongs to the caller that knows the axis. The rows below supply it.
+    return SizedBox(
+      width: width,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -259,6 +298,8 @@ class _Tile extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: highlight ? theme.colorScheme.error : null,
               fontWeight: highlight ? FontWeight.bold : null,

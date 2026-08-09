@@ -338,7 +338,28 @@ class ConnectionController extends ChangeNotifier {
     }
     final key = AdbAuthKey.generate();
     file.writeAsStringSync(key.encode());
+    await _restrictToOwner(file);
     return key;
+  }
+
+  /// Locks the identity file down to its owner.
+  ///
+  /// This file is an RSA private key: anyone holding it can authenticate to
+  /// every device that has ever accepted "Always allow from this computer",
+  /// with no further prompt. `adb` itself stores `~/.android/adbkey` as 0600
+  /// for exactly this reason, and Dart writes 0644 by default — on a shared
+  /// macOS or Linux machine that is world-readable.
+  ///
+  /// Best-effort: iOS sandboxes the container so the permissions are moot
+  /// there, and Windows ignores POSIX modes entirely. Failing to tighten them
+  /// must not stop the user connecting.
+  static Future<void> _restrictToOwner(File file) async {
+    if (Platform.isWindows) return;
+    try {
+      await Process.run('chmod', ['600', file.path]);
+    } on Object {
+      // Nothing actionable; the key is still usable.
+    }
   }
 
   /// Connects straight to a device's adbd over TCP, with no adb server.

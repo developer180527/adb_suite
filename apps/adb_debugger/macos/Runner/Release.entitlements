@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The sandbox is disabled deliberately, exactly as in adb_files.
+	     This app must exec the adb binary and open a socket to the local adb
+	     daemon, neither of which the sandbox permits. It also breaks binary
+	     discovery outright: inside the sandbox HOME points at the app
+	     container, so ~/Library/Android/sdk/platform-tools/adb resolves to a
+	     path that does not exist and the app reports "adb not found" on a
+	     machine where adb is plainly installed.
+
+	     This rules out Mac App Store distribution; notarized direct
+	     distribution is unaffected. -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

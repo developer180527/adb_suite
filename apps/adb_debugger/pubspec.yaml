@@ -1,0 +1,39 @@
+name: adb_debugger
+description: A live logcat and device-vitals console for Android devices.
+publish_to: none
+# Build number is a placeholder for local runs; tool/release.sh overrides it
+# with the git commit count, exactly as adb_files does.
+version: 0.1.0+1
+resolution: workspace
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  adb_core:
+    git:
+      url: https://github.com/developer180527/adb_dart.git
+      path: packages/adb_core
+      ref: v0.4.0
+  adb_ui:
+    git:
+      url: https://github.com/developer180527/adb_dart.git
+      path: packages/adb_ui
+      ref: v0.4.0
+  feature_connect:
+    path: ../../packages/feature_connect
+  feature_logcat:
+    path: ../../packages/feature_logcat
+  feature_stats:
+    path: ../../packages/feature_stats
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

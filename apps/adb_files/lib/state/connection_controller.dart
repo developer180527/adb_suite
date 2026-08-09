@@ -432,6 +432,22 @@ class ConnectionController extends ChangeNotifier {
       // wrong address, phone asleep, or the router isolating clients.
       _error = 'Could not reach $host:$port — ${e.osError?.message ?? e.message}';
       _set(ConnectionPhase.failed);
+    } on TlsException {
+      // Verified against a Galaxy A71: an unknown key gets
+      // SSLV3_ALERT_CERTIFICATE_UNKNOWN from adbd. The TLS layer is working
+      // exactly as designed here — the device simply has never been told to
+      // trust this app — so the message must not read as a broken connection.
+      _error =
+          'The device rejected this app\'s identity.\n\n'
+          'Encryption is working; the device just has not been told to trust '
+          'this app yet, and there is no way to do that from the Wireless '
+          'debugging screen alone.\n\n'
+          'One-time setup, from a computer with the device on USB:\n'
+          '    adb tcpip 5555\n'
+          'Connect here to port 5555 once and accept the prompt on the device. '
+          'Then run "adb usb" and come back to the Wireless debugging port — '
+          'from then on it connects encrypted.';
+      _set(ConnectionPhase.failed);
     } on AdbProtocolError {
       // Something answered, but not in ADB. Overwhelmingly this is the
       // Android 11+ Wireless debugging port, which is TLS.
@@ -453,21 +469,19 @@ class ConnectionController extends ChangeNotifier {
   static String _rejectedAdvice(int port) {
     if (port != 5555) {
       return 'Nothing on port $port is speaking the ADB protocol.\n\n'
-          'If you took this port from Developer options → Wireless debugging, '
-          'that will not work here: Android 11+ encrypts that connection and '
-          'requires pairing through a desktop adb server, which iOS cannot '
-          'run.\n\n'
-          'Instead, connect the phone to a computer over USB once and run:\n'
-          '    adb tcpip 5555\n\n'
-          'Then come back and connect to port 5555. It stays enabled until the '
-          'phone reboots.';
+          'The Wireless debugging port changes every time wireless debugging '
+          'is switched off and on, so a port that worked before is usually '
+          'just stale. Re-open Developer options → Wireless debugging and use '
+          'the port shown there now.\n\n'
+          'Also check that Wireless debugging is still on — Android turns it '
+          'off when the device reboots.';
     }
-    return 'The device refused the connection.\n\n'
-        'USB debugging on its own is not enough — adbd only listens on USB '
-        'until you switch it to TCP. Connect the phone to a computer over USB '
-        'once and run:\n'
+    return 'Nothing is listening on port 5555.\n\n'
+        'That is the unencrypted legacy port, needed only for the one-time '
+        'trust step. Enable it from a computer with the device on USB:\n'
         '    adb tcpip 5555\n\n'
-        'It stays enabled until the phone reboots.';
+        'For everyday use prefer the port from Developer options → Wireless '
+        'debugging, which is encrypted.';
   }
 
   static String? _modelFromBanner(String banner) {

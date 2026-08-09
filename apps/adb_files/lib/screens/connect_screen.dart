@@ -190,7 +190,13 @@ class _AddressEntry extends StatefulWidget {
 
 class _AddressEntryState extends State<_AddressEntry> {
   final _host = TextEditingController();
-  final _port = TextEditingController(text: '5555');
+
+  /// Deliberately blank. The Wireless debugging port is assigned afresh every
+  /// time the setting is toggled, so any prefilled value is wrong more often
+  /// than it is right.
+  final _port = TextEditingController();
+
+  String? _validation;
 
   @override
   void dispose() {
@@ -201,11 +207,25 @@ class _AddressEntryState extends State<_AddressEntry> {
 
   void _connect() {
     final host = _host.text.trim();
-    if (host.isEmpty) return;
-    widget.controller.connectDirect(
-      host,
-      port: int.tryParse(_port.text.trim()) ?? 5555,
-    );
+    final port = int.tryParse(_port.text.trim());
+
+    if (host.isEmpty) {
+      setState(() => _validation = 'Enter the device\'s IP address.');
+      return;
+    }
+    // Never fall back to 5555 for a missing port. That silently swaps an
+    // encrypted connection for a plaintext one, which is the opposite of what
+    // someone reading "encrypted" on this screen has agreed to.
+    if (port == null || port < 1 || port > 65535) {
+      setState(() {
+        _validation =
+            'Enter the port from Developer options → Wireless debugging.';
+      });
+      return;
+    }
+
+    setState(() => _validation = null);
+    widget.controller.connectDirect(host, port: port);
   }
 
   @override
@@ -225,20 +245,34 @@ class _AddressEntryState extends State<_AddressEntry> {
         ),
         const SizedBox(height: 8),
         Text(
-          'First, connect the phone to a computer over USB once and run '
-          '"adb tcpip 5555". USB debugging on its own is not enough — adbd '
-          'only listens on USB until that command switches it to TCP.',
+          'On the device: Developer options → Wireless debugging. Enter the '
+          'IP address and port shown there.',
           textAlign: TextAlign.center,
           style: theme.textTheme.bodySmall,
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lock, size: 13, color: theme.colorScheme.primary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                'That connection is encrypted.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         Text(
-          'Do not use the port from Developer options → Wireless debugging. '
-          'Android 11+ encrypts that one and requires pairing through a '
-          'desktop adb server, which iOS cannot run.',
+          'The port changes every time wireless debugging is switched off and '
+          'on, so check it each time rather than reusing an old one.',
           textAlign: TextAlign.center,
           style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.error,
+            color: theme.disabledColor,
           ),
         ),
         const SizedBox(height: 24),
@@ -268,6 +302,7 @@ class _AddressEntryState extends State<_AddressEntry> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'Port',
+                  hintText: '37115',
                   border: OutlineInputBorder(),
                   isDense: true,
                 ),
@@ -276,6 +311,14 @@ class _AddressEntryState extends State<_AddressEntry> {
             ),
           ],
         ),
+        if (_validation != null) ...[
+          const SizedBox(height: 10),
+          Text(
+            _validation!,
+            style: TextStyle(color: theme.colorScheme.error),
+            textAlign: TextAlign.center,
+          ),
+        ],
         if (widget.controller.error != null) ...[
           const SizedBox(height: 12),
           Text(
@@ -286,11 +329,39 @@ class _AddressEntryState extends State<_AddressEntry> {
         ],
         const SizedBox(height: 20),
         FilledButton(onPressed: _connect, child: const Text('Connect')),
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
+        // The one thing the Wireless debugging screen cannot do for you.
+        // Android's pairing code exchange needs a desktop adb server, so the
+        // device is taught to trust this app over the legacy port instead —
+        // once — and every connection after that is encrypted.
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          title: Text(
+            'First time with this device?',
+            style: theme.textTheme.bodySmall,
+          ),
+          children: [
+            Text(
+              'The device has to be told to trust this app once, and the '
+              'pairing code on the Wireless debugging screen cannot do it — '
+              'that exchange needs a desktop adb server.\n\n'
+              'From a computer with the device connected over USB:\n'
+              '    adb tcpip 5555\n\n'
+              'Connect here to port 5555 and accept the prompt on the device. '
+              'Then run "adb usb" to close that unencrypted port again. From '
+              'then on, use the Wireless debugging port above and the '
+              'connection is encrypted.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
         Text(
-          'The device must be on the same network as this one. Some routers '
-          'block devices from seeing each other — if the connection times out, '
-          'check for "AP isolation" in your router settings.',
+          'The device must be reachable from this one. Many routers block '
+          'devices from seeing each other — if the connection times out, look '
+          'for "AP isolation" in the router settings, or put both devices on a '
+          'VPN such as Tailscale.',
           textAlign: TextAlign.center,
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.disabledColor,

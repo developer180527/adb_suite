@@ -27,8 +27,8 @@ are built and tested but not yet composed into their own app.
 |---|---|
 | **Languages** | Dart / Flutter, plus Swift for macOS native bits |
 | **Targets** | macOS (primary), Windows, Linux, iOS/iPad (limited) |
-| **Code** | ~12,350 lines of library code, ~2,780 of tests |
-| **Tests** | **256 passing** — 57 + 16 + 65 + 40 + 32 + 46 |
+| **Code** | ~12,940 lines of library code, ~3,070 of tests |
+| **Tests** | **275 passing** — 67 + 16 + 65 + 40 + 32 + 55 |
 | **License** | MIT, holder "Venu Gopal" |
 
 ---
@@ -69,7 +69,7 @@ written relative to the workspace root for that reason — see
 | GitHub | `developer180527/adb_dart` | `developer180527/adb_suite` |
 | Visibility | public | private |
 | Contains | protocol + shared UI | features + apps |
-| Versioned by | git tags (`v0.3.2`) | app version in pubspec |
+| Versioned by | git tags (`v0.4.0`) | app version in pubspec |
 
 **Why two repos.** The protocol layer is generally useful and publishable; the
 product is not. Splitting them keeps the public surface small and forces the
@@ -82,13 +82,13 @@ dependency direction to stay honest.
 ```mermaid
 graph TD
     subgraph suite["adb_suite (private)"]
-        APP["apps/adb_files<br/>4,940 lines"]
+        APP["apps/adb_files<br/>5,174 lines"]
         FF["feature_files<br/>3,060 lines"]
         FL["feature_logcat<br/>983 lines"]
         FS["feature_stats<br/>820 lines"]
     end
     subgraph dart["adb_dart (public)"]
-        CORE["adb_core<br/>2,321 lines · pure Dart"]
+        CORE["adb_core<br/>2,673 lines · pure Dart"]
         UI["adb_ui<br/>225 lines"]
     end
 
@@ -123,11 +123,24 @@ Two transports implement one `AdbTransport` interface:
 | Transport | Path | How it works | Status |
 |---|---|---|---|
 | **Host** | `transport/host/` | Talks to the local `adb` server on TCP 5037 | Works, primary |
-| **Direct** | `transport/direct/` | Speaks the device protocol itself, incl. the RSA handshake | Works, spike-quality |
+| **Direct** | `transport/direct/` | Speaks the device protocol itself — legacy `AUTH`, or `STLS` + TLS 1.3 | Works, verified against hardware |
 
-*Host* is what the apps use. It requires the `adb` binary. *Direct* exists so
-iOS/iPad could eventually connect over Wi-Fi without a binary, since iOS cannot
+*Host* is what desktop uses. It requires the `adb` binary. *Direct* needs only a
+socket, which is what makes an iOS/iPad build possible at all, since iOS cannot
 spawn processes.
+
+**The direct transport speaks two dialects, chosen by the device.** A legacy
+`adb tcpip 5555` listener answers a cleartext `CNXN` with `AUTH` and the whole
+session stays in the clear. An Android 11+ *Wireless debugging* listener answers
+with `STLS`; the version is echoed back, the socket upgrades to TLS 1.3 carrying
+a client certificate, and adbd authenticates the host by the **public key in
+that certificate** rather than by an `AUTH` signature. `isSecure` says which
+happened, and `peerCertificate` holds the device's certificate for pinning —
+with no CA anywhere in the design, pinning is the only impersonation check
+available.
+
+Both paths are verified against a Galaxy A71 on Android 13: shell, sync listing
+and a push/pull round trip over each.
 
 ```
 adb_session.dart              top-level entry point
@@ -140,16 +153,34 @@ transport/
   host/host_protocol.dart     4-hex length framing, OKAY/FAIL
   host/adb_binary.dart        locates the adb executable
   direct/adb_auth_key.dart    RSA-2048 PKCS#1 v1.5 signing, Android RSAPublicKey struct
+  direct/adb_tls_identity.dart  PKCS#8 key + self-signed X.509 for the TLS path
   direct/adb_message.dart     24-byte header, magic = command ^ 0xFFFFFFFF
+  direct/direct_connection.dart  CNXN/AUTH, the STLS upgrade, stream multiplexing
 util/byte_reader.dart         resumable TCP framing
 util/posix_shell.dart         shell quoting
 ```
 
 **Start here:** `adb_session.dart`, then `services/sync_service.dart`.
 
+`adb_tls_identity.dart` assembles DER by hand from pointycastle's ASN.1
+primitives, because Dart has no X.509 writer. That is mechanical rather than
+clever — the structures are fixed by RFC 5280 and PKCS#1 — but "looks right" is
+not a standard for DER, so the tests check the output against **OpenSSL**:
+parse, verify the signature over the TBS bytes, match the certificate modulus
+to the key, and hand the pair to a `SecurityContext`.
+
 `example/` holds runnable scripts against a real device — `smoke.dart`,
-`integration.dart`, `remote_probe.dart`, `direct_spike.dart`. These need
-hardware and are excluded from CI.
+`integration.dart`, `remote_probe.dart`, `direct_spike.dart`, plus
+`stls_probe.dart` (asks a port whether it answers `AUTH` or `STLS`) and
+`tls_spike.dart` (the TLS handshake on its own). These need hardware and are
+excluded from CI.
+
+**Testing the wireless protocol without a network.** `adb forward tcp:6556
+tcp:<device-port>` tunnels a device TCP port over USB, so `127.0.0.1:6556`
+reaches adbd's own listener and the entire wireless handshake — STLS included —
+can be exercised from a laptop with no route to the phone. This is how the TLS
+transport was developed and verified while the router was blocking every direct
+connection.
 
 ### `adb_ui` — shared Flutter bits
 
@@ -245,11 +276,12 @@ been a large refactor of working code for no visible gain.
 
 #### Connecting
 
-| Route | Transport | Where |
-|---|---|---|
-| USB | host server, auto-detected | everywhere with a local adb |
-| **Wi-Fi, paired** | host server: `host:pair` then `host:connect` | desktop |
-| Wi-Fi, direct | `DirectAdbConnection`, RSA handshake in-process | iOS/iPad |
+| Route | Transport | Encrypted | Where |
+|---|---|---|---|
+| USB | host server, auto-detected | n/a | everywhere with a local adb |
+| **Wi-Fi, paired** | host server: `host:pair` then `host:connect` | yes | desktop |
+| **Wi-Fi, TLS** | `DirectAdbConnection`, `STLS` + client certificate | **yes** | iOS/iPad |
+| Wi-Fi, legacy | `DirectAdbConnection`, `AUTH` over `adb tcpip 5555` | **no** | iOS/iPad, first-time setup only |
 
 Desktop wireless deliberately goes through the **local adb server**, not the
 direct transport: the server already implements the Android 11+ pairing
@@ -262,6 +294,29 @@ Android splits pairing and connecting across **two different ports**: pairing
 runs on a port that changes every time the pairing dialog is opened, connecting
 on a stable one. Conflating them is the usual reason wireless "does not work",
 so the dialog separates them and says so.
+
+**The iPad flow has a one-time step that cannot be skipped.** Android's pairing
+code exchange is SPAKE2 over TLS and needs a desktop adb server, which iOS
+cannot run — so a fresh identity has no way to become trusted from the Wireless
+debugging screen alone. Instead the device is taught to trust the app **once**
+over the legacy port (`adb tcpip 5555`, accept the on-device prompt), after
+which the same key is accepted by the TLS listener and the plaintext port can be
+closed again with `adb usb`. That the legacy authorisation carries over to TLS
+is the thing that makes an iPad build viable without implementing SPAKE2, and it
+was confirmed against hardware rather than assumed.
+
+The address screen therefore leads with the Wireless debugging port and keeps
+the legacy one behind a "First time with this device?" disclosure. It also
+refuses to connect when the port field is empty: defaulting a missing port to
+5555 would silently swap the encrypted connection the screen promises for a
+plaintext one.
+
+`isSessionEncrypted` is surfaced as a **"Not encrypted" badge in the sidebar,
+and only when false**. `true` stays silent — a reassuring badge on every secure
+session trains people to stop reading that row — and `null`, the adb-server
+case where the server negotiates TLS without reporting it, stays silent too,
+since warning there would fire on every USB session and teach users to dismiss
+it.
 
 ---
 
@@ -302,12 +357,12 @@ Run everything, from the workspace root. Each line is a subshell, so one
 failure does not leave you in the wrong directory for the next:
 
 ```bash
-(cd adb_dart/packages/adb_core        && dart test)     # 57
+(cd adb_dart/packages/adb_core        && dart test)     # 67
 (cd adb_dart/packages/adb_ui          && flutter test)  # 16
 (cd adb_suite/packages/feature_files  && flutter test)  # 65
 (cd adb_suite/packages/feature_logcat && flutter test)  # 40
 (cd adb_suite/packages/feature_stats  && flutter test)  # 32
-(cd adb_suite/apps/adb_files          && flutter test)  # 46
+(cd adb_suite/apps/adb_files          && flutter test)  # 55
 ```
 
 ---
@@ -343,14 +398,39 @@ outright. All three platforms means all three machines, which is what
 `.github/workflows/release.yml` does — one runner each, `fail-fast: false`.
 Push a `v*` tag to build all three and attach them to a GitHub Release.
 
+A `workflow_dispatch` run takes an `only` input (`all`/`macOS`/`Linux`/
+`Windows`) and publishes nothing, so a platform can be iterated on alone —
+worth using, because this repo is private and **macOS runner minutes bill at ten
+times the Linux rate**. Tag pushes ignore the input and always build all three.
+Because neither `matrix` nor `secrets` is available in a job-level `if:`, the
+selection is done by a `setup` job that emits the matrix as JSON.
+
+**Windows needs `PUB_CACHE` off `AppData`.** cargokit (via
+`super_native_extensions`) resolves symlinks with a PowerShell script that walks
+a path calling `Get-Item`, which cannot see hidden directories without
+`-Force` — and `C:\Users\runneradmin\AppData` is hidden. With the pub cache
+underneath it the build **hangs** rather than failing, burning Windows minutes
+at 2×. The workflow points `PUB_CACHE` at `D:\pubcache` before flutter-action
+runs; the short path also buys MAX_PATH headroom.
+
 ### Platform support
 
 | Platform | Build | Signed | Notes |
 |---|---|---|---|
-| macOS | ✅ verified, DMG | Apple Development only | **Gatekeeper rejects it** — see below |
-| Windows | via CI only | ❌ unsigned | Packaging never executed yet |
-| Linux | via CI only | n/a | tar.gz + `install.sh` to `~/.local` |
-| iOS/iPad | compiles | dev cert | Has never connected to a device |
+| macOS | ✅ DMG, released | ad-hoc (Xcode) | **Gatekeeper rejects it** — see below |
+| Windows | ✅ zip, released | ❌ unsigned | Built by CI; not yet run on Windows |
+| Linux | ✅ tar.gz, released | n/a | Built by CI; `install.sh` to `~/.local`; not yet run |
+| iOS/iPad | compiles | dev cert | The app has never connected to a device |
+
+**v0.1.0 shipped all three** — the first Windows and Linux builds this project
+has ever produced. The binaries exist and are attached to the GitHub release;
+nobody has *launched* the Windows or Linux ones yet, which is a different claim.
+
+Signing is optional in CI and off by default. `MACOS_CERT_P12` /
+`MACOS_CERT_PASSWORD` import a certificate into a throwaway keychain if set.
+Leaving them unset is not the same as unsigned: Xcode ad-hoc signs during the
+build (`codesign -dv` reports `flags=0x2(adhoc)`), which is what lets the app
+launch on Apple Silicon at all.
 
 **macOS signing, honestly.** A free Apple ID issues only an *Apple Development*
 certificate. `codesign --verify --strict` passes; `spctl -a` says **rejected**.
@@ -442,6 +522,26 @@ Institutional knowledge. Each of these was a live bug.
   measured, not estimated. A mistyped IP is the likeliest cause and the user
   needs telling while they still remember typing it, so the app imposes its own
   20-second timeout and keeps Cancel enabled throughout.
+- **`STLS` carries its version in `arg0` as `0x01000000`** — one packed
+  constant, with `arg1` zero. Published descriptions call it a major and minor
+  version split across `arg0`/`arg1`; the device disagrees. Echo back whatever
+  `arg0` it sent.
+- **The Wireless debugging port is reassigned every time the setting is
+  toggled.** Observed moving from 35527 to 36543 on one device in one session.
+  Never persist it, never default it, and treat "nothing is listening" on a
+  remembered port as stale rather than broken.
+- **A device that does not know your key answers TLS with
+  `SSLV3_ALERT_CERTIFICATE_UNKNOWN`**, surfacing as a `TlsException`. Encryption
+  is working perfectly at that point — only trust is missing — so reporting it
+  as a connection failure sends people to debug the network instead of doing the
+  one-time authorisation.
+- **Never default a missing port to 5555.** It is the plaintext port, so a
+  convenience fallback silently downgrades a connection the UI has just
+  described as encrypted. Refuse instead.
+- **`AdbAuthKey` stored only `(n, d)`, which cannot produce a PKCS#8 key** — the
+  CRT parameters are mandatory. Regenerating would have discarded every "Always
+  allow from this computer" the identity had earned, so the factors are
+  recovered from `(n, e, d)` instead. v1 files still load.
 
 ### Platform
 
@@ -454,6 +554,16 @@ Institutional knowledge. Each of these was a live bug.
 - **`Spacer` in `AlertDialog.actions` asserts at runtime.** Actions are laid
   out in an `OverflowBar`, which is not a `Flex`, and `Spacer` requires one.
   The analyzer sees nothing; the dialog explodes the first time it opens.
+- **`SecureSocket.secure()` detaches an existing stream subscription itself**,
+  so a `ByteReader` already reading the socket is *not* an obstacle to a
+  STARTTLS-style upgrade. This was expected to force a `RawSocket` rewrite of
+  the direct transport and did not — one experiment against a device settled
+  what a day of refactoring would have assumed. Anything buffered inside the
+  reader would still be lost, but adbd sends `STLS` and then waits.
+- **AP isolation looks exactly like a code bug.** Two devices on the same `/24`,
+  100% packet loss, `adb connect` reporting "No route to host". Ping before
+  debugging anything in the app; if the router isolates clients, no amount of
+  protocol work will help and a VPN such as Tailscale is the fix.
 - **`TextTheme.apply(fontSizeFactor:)` asserts non-null `fontSize`**, which
   Material 2021 typography violates — a full-screen red error, not a fallback.
   Set sizes explicitly.
@@ -472,20 +582,58 @@ paths, trash, preview of media and PDFs, tabs, tab tear-off, native context
 menus, theming, settings. The disconnected skeleton and the Wi-Fi dialog are
 verified on macOS against a real adb server.
 
+**The direct transport is proven.** Both dialects run shell, sync listing and a
+push/pull round trip against the A71: legacy `AUTH` on port 5555 in the clear,
+and `STLS` + TLS 1.3 on the Wireless debugging port encrypted, with adbd
+accepting a certificate built by `adb_tls_identity.dart`. This was the
+long-standing "unproven end to end" gap and it is closed.
+
 **Known gaps:**
 
-- **Wireless has never completed a connection to a real device.** The failure,
-  timeout and pairing paths were exercised against a live adb server; the
-  success path has only unit tests, because no device was attached when it was
-  written. The first thing to try when hardware is available.
-- **iPad has never connected to a device.** Blocked by AP isolation on the
-  router, not by code. The direct transport exists for this but is unproven
-  end to end — and the same router behaviour would block desktop Wi-Fi too.
-- **Windows and Linux have never been built.** The `release.sh` branches for
-  them are syntax-checked only; `cygpath`/`Compress-Archive` and the Linux apt
-  list are unexercised.
+- **The app has never run on an iPad against a device.** `adb_core` is verified
+  against the A71, but through a USB port-forward from a Mac — not the Flutter
+  app on iPadOS over a network. Those are different claims and only the first
+  is earned.
+- **The router isolates clients.** Two devices on the same `/24` cannot reach
+  each other: 100% packet loss, `adb connect` says "No route to host". This
+  blocks every wireless route regardless of transport. Putting both devices on
+  a VPN (Tailscale — the iPad is already on the tailnet, the phone is not) is
+  the fix; nothing in the code can route around it.
+- **Desktop `host:connect` wireless is still unproven against a device.** Its
+  failure, timeout and reply-parsing paths are tested; a successful connection
+  has never happened, because the same AP isolation blocks it.
+- **Windows and Linux binaries have never been run.** CI builds and releases
+  them, which is new, but nobody has launched either one.
+- **`_DirectStream.add()` does not wait for `OKAY` between `WRTE` chunks.** ADB
+  flow control expects an ack per write. Browsing sends small requests and
+  tolerates it; large uploads may hang or corrupt. Now testable, since the
+  transport works against hardware.
 - **`feature_logcat` has no host app.** An "android debugger" app composing
   logcat + stats + shell is the obvious next one.
 - **Live device tests need hardware** and are excluded from CI by design.
 - Licensing for `adb_core` is still MIT; Apache-2.0 was recommended for the
   public protocol layer (patent grant) but not adopted.
+
+### Security posture, plainly
+
+The legacy `adb tcpip 5555` route is **not** secure and should be treated as a
+setup step rather than a way to work:
+
+- **No confidentiality.** File contents, paths and shell output cross the
+  network in the clear.
+- **No device authentication.** ADB's RSA handshake proves the *host* to the
+  *device*, never the reverse, so anything on the network can impersonate the
+  phone. TLS fixes this, and `peerCertificate` allows pinning.
+- **Open to the whole LAN.** Any device can raise the "Allow debugging?" prompt;
+  one careless "Always allow" grants shell, filesystem and install rights
+  permanently. Exposed 5555 has been mass-scanned and wormed in the wild.
+- **It persists until reboot.** Close it with `adb usb`.
+
+Prefer the TLS route, and note **CVE-2026-0073**, a client-authentication bypass
+in adbd's own TLS handling reported against unpatched Android 11+ devices with
+adb over TCP enabled. Keep devices patched and off untrusted networks; the app
+cannot compensate for a vulnerable daemon.
+
+The RSA identity is stored `0600` (`adb` keeps `~/.android/adbkey` the same
+way): anyone who can read it can authenticate to every device that ever
+accepted "Always allow", with no prompt.

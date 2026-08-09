@@ -10,7 +10,7 @@ import 'package:flutter/services.dart';
 
 import '../state/app_options.dart';
 import '../state/app_settings.dart';
-import '../state/connection_controller.dart';
+import 'package:feature_connect/feature_connect.dart';
 import '../state/tabs_controller.dart';
 import '../widgets/browser_toolbar.dart';
 import '../widgets/document_viewer.dart';
@@ -70,8 +70,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
   @override
   void initState() {
     super.initState();
-    _files = widget.connection.fileService!;
-    _transfers = widget.connection.transfers!;
+    // Built here rather than by the connection: feature_connect stops at the
+    // session on purpose, so a debugger app does not inherit file transfer and
+    // this app does not inherit logcat.
+    _files = FileService(widget.connection.session!);
+    _transfers = TransferManager(_files);
     // Cache under the OS cache directory so it can be reclaimed under disk
     // pressure and does not clutter Documents.
     final home = Platform.environment['HOME'] ?? Directory.systemTemp.path;
@@ -108,6 +111,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
   void dispose() {
     _tabs
       ..removeListener(_onTabsChanged)
+      ..dispose();
+    // Ours to clean up now that the connection no longer owns them.
+    _transfers
+      ..cancelAll()
       ..dispose();
     unawaited(_server.stop());
     _focusNode.dispose();

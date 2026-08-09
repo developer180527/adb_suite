@@ -1,4 +1,4 @@
-import 'package:adb_files/state/wireless_reply.dart';
+import 'package:feature_connect/feature_connect.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../state/connection_controller.dart';
+import 'package:feature_connect/feature_connect.dart';
 import '../widgets/browser_toolbar.dart';
 import '../widgets/sidebar.dart';
-import 'connect_screen.dart';
 
 /// The window with no device attached.
 ///

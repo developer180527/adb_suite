@@ -1,7 +1,7 @@
 import 'package:adb_core/adb_core.dart';
 import 'package:flutter/material.dart';
 
-import '../state/connection_controller.dart';
+import 'connection_controller.dart';
 
 /// Everything before a device is ready.
 ///

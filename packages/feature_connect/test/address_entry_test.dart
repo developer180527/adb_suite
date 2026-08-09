@@ -1,5 +1,4 @@
-import 'package:adb_files/screens/connect_screen.dart';
-import 'package:adb_files/state/connection_controller.dart';
+import 'package:feature_connect/feature_connect.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -21,6 +21,8 @@ dependencies:
       url: https://github.com/developer180527/adb_dart.git
       path: packages/adb_ui
       ref: v0.4.0
+  feature_connect:
+    path: ../../packages/feature_connect
   feature_files:
     path: ../../packages/feature_files
   feature_stats:

@@ -7,7 +7,7 @@ import 'theme.dart';
 import 'screens/disconnected_screen.dart';
 import 'state/app_options.dart';
 import 'state/app_settings.dart';
-import 'state/connection_controller.dart';
+import 'package:feature_connect/feature_connect.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();

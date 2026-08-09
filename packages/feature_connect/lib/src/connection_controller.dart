@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:adb_core/adb_core.dart';
-import 'package:feature_files/feature_files.dart';
 import 'package:flutter/foundation.dart';
 
 import 'wireless_reply.dart';
@@ -54,8 +53,6 @@ class ConnectionController extends ChangeNotifier {
   ConnectionPhase _phase = ConnectionPhase.starting;
   HostTransport? _transport;
   AdbSession? _session;
-  FileService? _fileService;
-  TransferManager? _transfers;
   StreamSubscription<List<AdbDevice>>? _deviceSub;
 
   List<AdbDevice> _devices = const [];
@@ -76,8 +73,6 @@ class ConnectionController extends ChangeNotifier {
   List<AdbDevice> get devices => _devices;
   Object? get error => _error;
   AdbSession? get session => _session;
-  FileService? get fileService => _fileService;
-  TransferManager? get transfers => _transfers;
   HostTransport? get transport => _transport;
   AdbDevice? get device => _session?.device;
 
@@ -202,12 +197,7 @@ class ConnectionController extends ChangeNotifier {
     _set(ConnectionPhase.connecting);
     try {
       final connection = await transport.connect(device.serial);
-      final session = AdbSession(connection, device);
-      final service = FileService(session);
-
-      _session = session;
-      _fileService = service;
-      _transfers = TransferManager(service);
+      _session = AdbSession(connection, device);
       _error = null;
       // The adb server owns this connection and does not report whether it
       // used TLS, so there is nothing honest to claim either way.
@@ -408,12 +398,7 @@ class ConnectionController extends ChangeNotifier {
             state: AdbDeviceState.device,
             model: _modelFromBanner(connection.banner),
           );
-          final session = AdbSession(connection, device);
-          final service = FileService(session);
-
-          _session = session;
-          _fileService = service;
-          _transfers = TransferManager(service);
+          _session = AdbSession(connection, device);
           _error = null;
           // The one path that actually knows: it negotiated the TLS upgrade,
           // or it did not.
@@ -528,10 +513,10 @@ class ConnectionController extends ChangeNotifier {
 
   void _teardownSession() {
     _encrypted = null;
-    _transfers?.cancelAll();
-    _transfers?.dispose();
-    _transfers = null;
-    _fileService = null;
+    // Anything an app built on top of this session is the app's to dispose;
+    // it is told by the phase change, and holding references to services this
+    // layer does not understand is how the file manager ended up wired into
+    // the connection logic in the first place.
     unawaited(_session?.close());
     _session = null;
   }

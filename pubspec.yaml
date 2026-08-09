@@ -5,7 +5,9 @@ environment:
   sdk: ^3.9.0
 
 workspace:
+  - apps/adb_debugger
   - apps/adb_files
+  - packages/feature_connect
   - packages/feature_files
   - packages/feature_logcat
   - packages/feature_stats

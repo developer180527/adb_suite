@@ -1,5 +1,5 @@
 import 'package:adb_files/screens/disconnected_screen.dart';
-import 'package:adb_files/state/connection_controller.dart';
+import 'package:feature_connect/feature_connect.dart';
 import 'package:adb_files/widgets/browser_toolbar.dart';
 import 'package:adb_files/widgets/sidebar.dart';
 import 'package:flutter/material.dart';

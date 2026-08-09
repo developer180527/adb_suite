@@ -998,6 +998,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
             Sidebar(
               controller: _browser,
               deviceName: widget.connection.device?.displayName ?? 'Device',
+              encrypted: widget.connection.isSessionEncrypted,
               freeSpace: _freeSpace,
               onOpenSettings: _tabs.openSettings,
             ),

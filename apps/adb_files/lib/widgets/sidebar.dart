@@ -31,8 +31,17 @@ class Sidebar extends StatelessWidget {
     required this.deviceName,
     this.freeSpace,
     this.onOpenSettings,
+    this.encrypted,
     super.key,
   });
+
+  /// Whether this session is encrypted, or null when that is not knowable.
+  ///
+  /// Only `false` gets a badge. A green "secure" label on every USB session
+  /// would be noise, and null means we genuinely do not know — the warning
+  /// exists because an RSA handshake reads as encryption to most people when
+  /// the legacy transport is plaintext on the wire.
+  final bool? encrypted;
 
   /// Null while no device is connected. The shortcuts still render, greyed
   /// out, so the disconnected window keeps its shape instead of collapsing to
@@ -79,6 +88,7 @@ class Sidebar extends StatelessWidget {
               ],
             ),
           ),
+          if (encrypted == false) const _UnencryptedBadge(),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -125,6 +135,56 @@ class Sidebar extends StatelessWidget {
       }
     }
     return best;
+  }
+}
+
+/// Says plainly that this session is in the clear.
+///
+/// The legacy `adb tcpip 5555` transport carries file contents, paths and
+/// shell output unencrypted, and its RSA handshake authenticates *us to the
+/// device* without protecting anything on the wire. Nothing else in the window
+/// would tell you that.
+class _UnencryptedBadge extends StatelessWidget {
+  const _UnencryptedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: Tooltip(
+        message:
+            'This device is connected over the legacy ADB protocol, which is '
+            'not encrypted. Anyone on this network can read the files you '
+            'browse and transfer.\n\n'
+            'Android 11+ "Wireless debugging" connects over TLS instead.',
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.errorContainer,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.lock_open,
+                size: 14,
+                color: theme.colorScheme.onErrorContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Not encrypted',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

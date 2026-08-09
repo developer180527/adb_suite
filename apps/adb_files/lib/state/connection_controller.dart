@@ -60,6 +60,17 @@ class ConnectionController extends ChangeNotifier {
 
   List<AdbDevice> _devices = const [];
   Object? _error;
+  bool? _encrypted;
+
+  /// Whether the current session is encrypted, when that is knowable.
+  ///
+  /// `true`/`false` come from the direct transport, which negotiates TLS itself
+  /// and therefore knows. `null` means the local adb server owns the
+  /// connection: over USB the question is moot, and for a wireless device the
+  /// server decides whether to use TLS without telling us. Reporting `null` as
+  /// "not encrypted" would cry wolf on every USB session; reporting it as
+  /// encrypted would be a lie. Saying nothing is the only honest option.
+  bool? get isSessionEncrypted => _encrypted;
 
   ConnectionPhase get phase => _phase;
   List<AdbDevice> get devices => _devices;
@@ -198,6 +209,9 @@ class ConnectionController extends ChangeNotifier {
       _fileService = service;
       _transfers = TransferManager(service);
       _error = null;
+      // The adb server owns this connection and does not report whether it
+      // used TLS, so there is nothing honest to claim either way.
+      _encrypted = null;
       _set(ConnectionPhase.connected);
     } on Object catch (e) {
       _error = e;
@@ -401,6 +415,9 @@ class ConnectionController extends ChangeNotifier {
           _fileService = service;
           _transfers = TransferManager(service);
           _error = null;
+          // The one path that actually knows: it negotiated the TLS upgrade,
+          // or it did not.
+          _encrypted = connection.isSecure;
           _set(ConnectionPhase.connected);
 
         case DirectConnectResult.awaitingAuthorization:
@@ -496,6 +513,7 @@ class ConnectionController extends ChangeNotifier {
   }
 
   void _teardownSession() {
+    _encrypted = null;
     _transfers?.cancelAll();
     _transfers?.dispose();
     _transfers = null;
